@@ -1,0 +1,439 @@
+#define __IO volatile
+
+#define CCM_BASE (0x020C4000) // CCM 外设的基地址
+/*CCM外设结构体*/
+typedef struct
+{
+    // 由于是32位系统，这里int是32位的
+    __IO unsigned int CCR;
+    __IO unsigned int CCDR;
+    __IO unsigned int CSR;
+    __IO unsigned int CCSR;
+    __IO unsigned int CACRR;
+    __IO unsigned int CBCDR;
+    __IO unsigned int CBCMR;
+    __IO unsigned int CSCMR1;
+    __IO unsigned int CSCMR2;
+    __IO unsigned int CSCDR1;
+    __IO unsigned int CS1CDR;
+    __IO unsigned int CS2CDR;
+    __IO unsigned int CDCDR;
+    __IO unsigned int CHSCCDR;
+    __IO unsigned int CSCDR2;
+    __IO unsigned int CSCDR3;
+    // 为了使得地址是连续的，根据手册，这里需要预留一些空间
+    __IO unsigned int RESERVED_1[1];
+    __IO unsigned int CWDR;
+    __IO unsigned int CDHIPR;
+    __IO unsigned int RESERVED_2[2];
+    __IO unsigned int CLPCR;
+    __IO unsigned int CISR;
+    __IO unsigned int CIMR;
+    __IO unsigned int CCOSR;
+    __IO unsigned int CGPR;
+    __IO unsigned int CCGR0;
+    __IO unsigned int CCGR1;
+    __IO unsigned int CCGR2;
+    __IO unsigned int CCGR3;
+    __IO unsigned int CCGR4;
+    __IO unsigned int CCGR5;
+    __IO unsigned int CCGR6;
+    __IO unsigned int RESERVED_3[1];
+    __IO unsigned int CMEOR;
+
+} CCM_Type;
+// 下面这句话很妙，将地址强转成结构体指针，也就是说，这个结构体指针的内容就是地址CCM_BASE
+#define CCM ((CCM_Type *)CCM_BASE)
+
+/*用同样的方法设计其他设备的结构体*/
+#define CCM_ANALOG_BASE (0X020C8000)
+#define IOMUX_SW_MUX_BASE (0X020E0044)
+#define IOMUX_SW_PAD_BASE (0X020E0204)
+#define GPIO1_BASE (0x0209C000)
+#define GPIO2_BASE (0x020A0000)
+#define GPIO3_BASE (0x020A4000)
+#define GPIO4_BASE (0x020A8000)
+#define GPIO5_BASE (0x020AC000)
+
+/*CCM_ANALOG外设结构体*/
+typedef struct
+{
+    __IO unsigned int PLL_ARM;
+    __IO unsigned int PLL_ARM_SET;
+    __IO unsigned int PLL_ARM_CLR;
+    __IO unsigned int PLL_ARM_TOG;
+    __IO unsigned int PLL_USB1;
+    __IO unsigned int PLL_USB1_SET;
+    __IO unsigned int PLL_USB1_CLR;
+    __IO unsigned int PLL_USB1_TOG;
+    __IO unsigned int PLL_USB2;
+    __IO unsigned int PLL_USB2_SET;
+    __IO unsigned int PLL_USB2_CLR;
+    __IO unsigned int PLL_USB2_TOG;
+    __IO unsigned int PLL_SYS;
+    __IO unsigned int PLL_SYS_SET;
+    __IO unsigned int PLL_SYS_CLR;
+    __IO unsigned int PLL_SYS_TOG;
+    __IO unsigned int PLL_SYS_SS;
+    __IO unsigned int RESERVED_1[3];
+    __IO unsigned int PLL_SYS_NUM;
+    __IO unsigned int RESERVED_2[3];
+    __IO unsigned int PLL_SYS_DENOM;
+    __IO unsigned int RESERVED_3[3];
+    __IO unsigned int PLL_AUDIO;
+    __IO unsigned int PLL_AUDIO_SET;
+    __IO unsigned int PLL_AUDIO_CLR;
+    __IO unsigned int PLL_AUDIO_TOG;
+    __IO unsigned int PLL_AUDIO_DENOM;
+    __IO unsigned int RESERVED_4[3];
+    __IO unsigned int PLL_VIDEO;
+    __IO unsigned int PLL_VIDEO_SET;
+    __IO unsigned int PLL_VIDEO_CLR;
+    __IO unsigned int PLL_VIDEO_TOG;
+    __IO unsigned int PLL_VIDEO_NUM;
+    __IO unsigned int RESERVED_5[3];
+    __IO unsigned int PLL_VIDEO_DENOM;
+    __IO unsigned int RESERVED_6[7];
+    __IO unsigned int PLL_ENET;
+    __IO unsigned int PLL_ENET_SET;
+    __IO unsigned int PLL_ENET_CLR;
+    __IO unsigned int PLL_ENET_TOG;
+    __IO unsigned int PFD_480;
+    __IO unsigned int PFD_480_SET;
+    __IO unsigned int PFD_480_CLR;
+    __IO unsigned int PFD_480_TOG;
+    __IO unsigned int PFD_528;
+    __IO unsigned int PFD_528_SET;
+    __IO unsigned int PFD_528_CLR;
+    __IO unsigned int PFD_528_TOG;
+    __IO unsigned int RESERVED_7[16];
+    __IO unsigned int MISC0;
+    __IO unsigned int MISC0_SET;
+    __IO unsigned int MISC0_CLR;
+    __IO unsigned int MISC0_TOG;
+    __IO unsigned int MISC1;
+    __IO unsigned int MISC1_SET;
+    __IO unsigned int MISC1_CLR;
+    __IO unsigned int MISC1_TOG;
+    __IO unsigned int MISC2;
+    __IO unsigned int MISC2_SET;
+    __IO unsigned int MISC2_CLR;
+    __IO unsigned int MISC2_TOG;
+} CCM_ANALOG_Type;
+
+/*IOMUX寄存器组*/
+typedef struct
+{
+    __IO unsigned int JTAG_MOD;
+    __IO unsigned int JTAG_TMS;
+    __IO unsigned int JTAG_TDO;
+    __IO unsigned int JTAG_TDI;
+    __IO unsigned int JTAG_TCK;
+    __IO unsigned int JTAG_TRST_B;
+    __IO unsigned int GPIO1_IO00;
+    __IO unsigned int GPIO1_IO01;
+    __IO unsigned int GPIO1_IO02;
+    __IO unsigned int GPIO1_IO03;
+    __IO unsigned int GPIO1_IO04;
+    __IO unsigned int GPIO1_IO05;
+    __IO unsigned int GPIO1_IO06;
+    __IO unsigned int GPIO1_IO07;
+    __IO unsigned int GPIO1_IO08;
+    __IO unsigned int GPIO1_IO09;
+    __IO unsigned int UART1_TX_DATA;
+    __IO unsigned int UART1_RX_DATA;
+    __IO unsigned int UART1_CTS_B;
+    __IO unsigned int UART1_RTS_B;
+    __IO unsigned int UART2_TX_DATA;
+    __IO unsigned int UART2_RX_DATA;
+    __IO unsigned int UART2_CTS_B;
+    __IO unsigned int UART2_RTS_B;
+    __IO unsigned int UART3_TX_DATA;
+    __IO unsigned int UART3_RX_DATA;
+    __IO unsigned int UART3_CTS_B;
+    __IO unsigned int UART3_RTS_B;
+    __IO unsigned int UART4_TX_DATA;
+    __IO unsigned int UART4_RX_DATA;
+    __IO unsigned int UART5_TX_DATA;
+    __IO unsigned int UART5_RX_DATA;
+    __IO unsigned int ENET1_RX_DATA0;
+    __IO unsigned int ENET1_RX_DATA1;
+    __IO unsigned int ENET1_RX_EN;
+    __IO unsigned int ENET1_TX_DATA0;
+    __IO unsigned int ENET1_TX_DATA1;
+    __IO unsigned int ENET1_TX_EN;
+    __IO unsigned int ENET1_TX_CLK;
+    __IO unsigned int ENET1_RX_ER;
+    __IO unsigned int ENET2_RX_DATA0;
+    __IO unsigned int ENET2_RX_DATA1;
+    __IO unsigned int ENET2_RX_EN;
+    __IO unsigned int ENET2_TX_DATA0;
+    __IO unsigned int ENET2_TX_DATA1;
+    __IO unsigned int ENET2_TX_EN;
+    __IO unsigned int ENET2_TX_CLK;
+    __IO unsigned int ENET2_RX_ER;
+    __IO unsigned int LCD_CLK;
+    __IO unsigned int LCD_ENABLE;
+    __IO unsigned int LCD_HSYNC;
+    __IO unsigned int LCD_VSYNC;
+    __IO unsigned int LCD_RESET;
+    __IO unsigned int LCD_DATA00;
+    __IO unsigned int LCD_DATA01;
+    __IO unsigned int LCD_DATA02;
+    __IO unsigned int LCD_DATA03;
+    __IO unsigned int LCD_DATA04;
+    __IO unsigned int LCD_DATA05;
+    __IO unsigned int LCD_DATA06;
+    __IO unsigned int LCD_DATA07;
+    __IO unsigned int LCD_DATA08;
+    __IO unsigned int LCD_DATA09;
+    __IO unsigned int LCD_DATA10;
+    __IO unsigned int LCD_DATA11;
+    __IO unsigned int LCD_DATA12;
+    __IO unsigned int LCD_DATA13;
+    __IO unsigned int LCD_DATA14;
+    __IO unsigned int LCD_DATA15;
+    __IO unsigned int LCD_DATA16;
+    __IO unsigned int LCD_DATA17;
+    __IO unsigned int LCD_DATA18;
+    __IO unsigned int LCD_DATA19;
+    __IO unsigned int LCD_DATA20;
+    __IO unsigned int LCD_DATA21;
+    __IO unsigned int LCD_DATA22;
+    __IO unsigned int LCD_DATA23;
+    __IO unsigned int NAND_RE_B;
+    __IO unsigned int NAND_WE_B;
+    __IO unsigned int NAND_DATA00;
+    __IO unsigned int NAND_DATA01;
+    __IO unsigned int NAND_DATA02;
+    __IO unsigned int NAND_DATA03;
+    __IO unsigned int NAND_DATA04;
+    __IO unsigned int NAND_DATA05;
+    __IO unsigned int NAND_DATA06;
+    __IO unsigned int NAND_DATA07;
+    __IO unsigned int NAND_ALE;
+    __IO unsigned int NAND_WP_B;
+    __IO unsigned int NAND_READY_B;
+    __IO unsigned int NAND_CE0_B;
+    __IO unsigned int NAND_CE1_B;
+    __IO unsigned int NAND_CLE;
+    __IO unsigned int NAND_DQS;
+    __IO unsigned int SD1_CMD;
+    __IO unsigned int SD1_CLK;
+    __IO unsigned int SD1_DATA0;
+    __IO unsigned int SD1_DATA1;
+    __IO unsigned int SD1_DATA2;
+    __IO unsigned int SD1_DATA3;
+    __IO unsigned int CSI_MCLK;
+    __IO unsigned int CSI_PIXCLK;
+    __IO unsigned int CSI_VSYNC;
+    __IO unsigned int CSI_HSYNC;
+    __IO unsigned int CSI_DATA00;
+    __IO unsigned int CSI_DATA01;
+    __IO unsigned int CSI_DATA02;
+    __IO unsigned int CSI_DATA03;
+    __IO unsigned int CSI_DATA04;
+    __IO unsigned int CSI_DATA05;
+    __IO unsigned int CSI_DATA06;
+    __IO unsigned int CSI_DATA07;
+} IOMUX_SW_MUX_Type;
+
+typedef struct
+{
+    __IO unsigned int DRAM_ADDR00;
+    __IO unsigned int DRAM_ADDR01;
+    __IO unsigned int DRAM_ADDR02;
+    __IO unsigned int DRAM_ADDR03;
+    __IO unsigned int DRAM_ADDR04;
+    __IO unsigned int DRAM_ADDR05;
+    __IO unsigned int DRAM_ADDR06;
+    __IO unsigned int DRAM_ADDR07;
+    __IO unsigned int DRAM_ADDR08;
+    __IO unsigned int DRAM_ADDR09;
+    __IO unsigned int DRAM_ADDR10;
+    __IO unsigned int DRAM_ADDR11;
+    __IO unsigned int DRAM_ADDR12;
+    __IO unsigned int DRAM_ADDR13;
+    __IO unsigned int DRAM_ADDR14;
+    __IO unsigned int DRAM_ADDR15;
+    __IO unsigned int DRAM_DQM0;
+    __IO unsigned int DRAM_DQM1;
+    __IO unsigned int DRAM_RAS_B;
+    __IO unsigned int DRAM_CAS_B;
+    __IO unsigned int DRAM_CS0_B;
+    __IO unsigned int DRAM_CS1_B;
+    __IO unsigned int DRAM_SDWE_B;
+    __IO unsigned int DRAM_ODT0;
+    __IO unsigned int DRAM_ODT1;
+    __IO unsigned int DRAM_SDBA0;
+    __IO unsigned int DRAM_SDBA1;
+    __IO unsigned int DRAM_SDBA2;
+    __IO unsigned int DRAM_SDCKE0;
+    __IO unsigned int DRAM_SDCKE1;
+    __IO unsigned int DRAM_SDCLK0_P;
+    __IO unsigned int DRAM_SDQS0_P;
+    __IO unsigned int DRAM_SDQS1_P;
+    __IO unsigned int DRAM_RESET;
+    __IO unsigned int TEST_MODE;
+    __IO unsigned int POR_B;
+    __IO unsigned int ONOFF;
+    __IO unsigned int SNVS_PMIC_ON_REQ;
+    __IO unsigned int CCM_PMIC_STBY_REQ;
+    __IO unsigned int BOOT_MODE0;
+    __IO unsigned int BOOT_MODE1;
+    __IO unsigned int SNVS_TAMPER0;
+    __IO unsigned int SNVS_TAMPER1;
+    __IO unsigned int SNVS_TAMPER2;
+    __IO unsigned int SNVS_TAMPER3;
+    __IO unsigned int SNVS_TAMPER4;
+    __IO unsigned int SNVS_TAMPER5;
+    __IO unsigned int SNVS_TAMPER6;
+    __IO unsigned int SNVS_TAMPER7;
+    __IO unsigned int SNVS_TAMPER8;
+    __IO unsigned int SNVS_TAMPER9;
+    __IO unsigned int JTAG_MOD;
+    __IO unsigned int JTAG_TMS;
+    __IO unsigned int JTAG_TDO;
+    __IO unsigned int JTAG_TDI;
+    __IO unsigned int JTAG_TCK;
+    __IO unsigned int JTAG_TRST_B;
+    __IO unsigned int GPIO1_IO00;
+    __IO unsigned int GPIO1_IO01;
+    __IO unsigned int GPIO1_IO02;
+    __IO unsigned int GPIO1_IO03;
+    __IO unsigned int GPIO1_IO04;
+    __IO unsigned int GPIO1_IO05;
+    __IO unsigned int GPIO1_IO06;
+    __IO unsigned int GPIO1_IO07;
+    __IO unsigned int GPIO1_IO08;
+    __IO unsigned int GPIO1_IO09;
+    __IO unsigned int UART1_TX_DATA;
+    __IO unsigned int UART1_RX_DATA;
+    __IO unsigned int UART1_CTS_B;
+    __IO unsigned int UART1_RTS_B;
+    __IO unsigned int UART2_TX_DATA;
+    __IO unsigned int UART2_RX_DATA;
+    __IO unsigned int UART2_CTS_B;
+    __IO unsigned int UART2_RTS_B;
+    __IO unsigned int UART3_TX_DATA;
+    __IO unsigned int UART3_RX_DATA;
+    __IO unsigned int UART3_CTS_B;
+    __IO unsigned int UART3_RTS_B;
+    __IO unsigned int UART4_TX_DATA;
+    __IO unsigned int UART4_RX_DATA;
+    __IO unsigned int UART5_TX_DATA;
+    __IO unsigned int UART5_RX_DATA;
+    __IO unsigned int ENET1_RX_DATA0;
+    __IO unsigned int ENET1_RX_DATA1;
+    __IO unsigned int ENET1_RX_EN;
+    __IO unsigned int ENET1_TX_DATA0;
+    __IO unsigned int ENET1_TX_DATA1;
+    __IO unsigned int ENET1_TX_EN;
+    __IO unsigned int ENET1_TX_CLK;
+    __IO unsigned int ENET1_RX_ER;
+    __IO unsigned int ENET2_RX_DATA0;
+    __IO unsigned int ENET2_RX_DATA1;
+    __IO unsigned int ENET2_RX_EN;
+    __IO unsigned int ENET2_TX_DATA0;
+    __IO unsigned int ENET2_TX_DATA1;
+    __IO unsigned int ENET2_TX_EN;
+    __IO unsigned int ENET2_TX_CLK;
+    __IO unsigned int ENET2_RX_ER;
+    __IO unsigned int LCD_CLK;
+    __IO unsigned int LCD_ENABLE;
+    __IO unsigned int LCD_HSYNC;
+    __IO unsigned int LCD_VSYNC;
+    __IO unsigned int LCD_RESET;
+    __IO unsigned int LCD_DATA00;
+    __IO unsigned int LCD_DATA01;
+    __IO unsigned int LCD_DATA02;
+    __IO unsigned int LCD_DATA03;
+    __IO unsigned int LCD_DATA04;
+    __IO unsigned int LCD_DATA05;
+    __IO unsigned int LCD_DATA06;
+    __IO unsigned int LCD_DATA07;
+    __IO unsigned int LCD_DATA08;
+    __IO unsigned int LCD_DATA09;
+    __IO unsigned int LCD_DATA10;
+    __IO unsigned int LCD_DATA11;
+    __IO unsigned int LCD_DATA12;
+    __IO unsigned int LCD_DATA13;
+    __IO unsigned int LCD_DATA14;
+    __IO unsigned int LCD_DATA15;
+    __IO unsigned int LCD_DATA16;
+    __IO unsigned int LCD_DATA17;
+    __IO unsigned int LCD_DATA18;
+    __IO unsigned int LCD_DATA19;
+    __IO unsigned int LCD_DATA20;
+    __IO unsigned int LCD_DATA21;
+    __IO unsigned int LCD_DATA22;
+    __IO unsigned int LCD_DATA23;
+    __IO unsigned int NAND_RE_B;
+    __IO unsigned int NAND_WE_B;
+    __IO unsigned int NAND_DATA00;
+    __IO unsigned int NAND_DATA01;
+    __IO unsigned int NAND_DATA02;
+    __IO unsigned int NAND_DATA03;
+    __IO unsigned int NAND_DATA04;
+    __IO unsigned int NAND_DATA05;
+    __IO unsigned int NAND_DATA06;
+    __IO unsigned int NAND_DATA07;
+    __IO unsigned int NAND_ALE;
+    __IO unsigned int NAND_WP_B;
+    __IO unsigned int NAND_READY_B;
+    __IO unsigned int NAND_CE0_B;
+    __IO unsigned int NAND_CE1_B;
+    __IO unsigned int NAND_CLE;
+    __IO unsigned int NAND_DQS;
+    __IO unsigned int SD1_CMD;
+    __IO unsigned int SD1_CLK;
+    __IO unsigned int SD1_DATA0;
+    __IO unsigned int SD1_DATA1;
+    __IO unsigned int SD1_DATA2;
+    __IO unsigned int SD1_DATA3;
+    __IO unsigned int CSI_MCLK;
+    __IO unsigned int CSI_PIXCLK;
+    __IO unsigned int CSI_VSYNC;
+    __IO unsigned int CSI_HSYNC;
+    __IO unsigned int CSI_DATA00;
+    __IO unsigned int CSI_DATA01;
+    __IO unsigned int CSI_DATA02;
+    __IO unsigned int CSI_DATA03;
+    __IO unsigned int CSI_DATA04;
+    __IO unsigned int CSI_DATA05;
+    __IO unsigned int CSI_DATA06;
+    __IO unsigned int CSI_DATA07;
+    __IO unsigned int GRP_ADDDS;
+    __IO unsigned int GRP_DDRMODE_CTL;
+    __IO unsigned int GRP_B0DS;
+    __IO unsigned int GRP_DDRPK;
+    __IO unsigned int GRP_CTLDS;
+    __IO unsigned int GRP_B1DS;
+    __IO unsigned int GRP_DDRHYS;
+    __IO unsigned int GRP_DDRPKE;
+    __IO unsigned int GRP_DDRMODE;
+    __IO unsigned int GRP_DDR_TYPE;
+} IOMUX_SW_PAD_Type;
+
+/*GPIO寄存器结构体*/
+typedef struct
+{
+    __IO unsigned int DR;
+    __IO unsigned int GDIR;
+    __IO unsigned int PSR;
+    __IO unsigned int ICR1;
+    __IO unsigned int ICR2;
+    __IO unsigned int IMR;
+    __IO unsigned int ISR;
+    __IO unsigned int EDGE_SEL;
+} GPIO_Type;
+
+/*访问外设指针*/
+#define CCM_ANALOG ((CCM_ANALOG_Type *)CCM_ANALOG_BASE)
+#define IOMUX_SW_MUX ((IOMUX_SW_MUX_Type *)IOMUX_SW_MUX_BASE)
+#define IOMUX_SW_PAD ((IOMUX_SW_PAD_Type *)IOMUX_SW_PAD_BASE)
+#define GPIO1 ((GPIO_Type *)GPIO1_BASE)
+#define GPIO2 ((GPIO_Type *)GPIO2_BASE)
+#define GPIO3 ((GPIO_Type *)GPIO3_BASE)
+#define GPIO4 ((GPIO_Type *)GPIO4_BASE)
+#define GPIO5 ((GPIO_Type *)GPIO5_BASE)

@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"bsp_int.h": "c",
+			"imx6u.h": "c",
+			"bsp_key.h": "c",
+			"fsl_common.h": "c",
+			"core_ca7.h": "c",
+			"mcimx6y2.h": "c",
+			"main.h": "c",
+			"bsp_exit.h": "c"
+		}
+	}
+}
