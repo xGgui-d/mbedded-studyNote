@@ -2487,7 +2487,7 @@ sa_flags 指定了一些标志，控制信号的处理过程
 */
 ```
 
-siginfo_t 结构体
+siginfo_t 结构体（后面异步 IO 会用到）
 
 ```c
 siginfo_t {
@@ -4536,4 +4536,2750 @@ arg 清理处理函数的参数
 事实上，这一对函数是用宏来实现的，如果不匹配来使用，连编译都过不去（用宏定义把 { } 拆开了）
 
 ### 11.9 线程属性
+
+在 Linux 下使用 pthread_attr_t 数据类型定义线程的所有属性，当使用 pthread_attr_t 对象之后，需要使用 pthread_attr_init 函数堆该对象进程初始化操作，当不使用时，需要使用 pthread_attr_destroy 函数将其摧毁
+
+```c
+#include <pthread.h>
+int pthread_attr_init(pthread_attr_t *attr);
+int pthread_attr_destroy(pthread_attr_t *attr);
+/*
+调用成功返回 0 调用失败返回非0值的错误码
+*/
+```
+
+#### 11.9.1 线程栈属性
+
+在 pthread_attr_t 数据结构中定义了栈的起始地址以及栈的大小，使用 pthread_attr_getstack 可以获取该信息，而使用 pthread_attr_setstack 函数可以设置栈的起始地址和栈大小
+
+```c
+#include <pthread.h>
+int pthread_attr_setstack(pthread_attr_t *attr, void *stackaddr, size_t stacksize);
+int pthread_attr_getstack(const pthread_attr_t *attr, void **stackaddr, size_t *stacksize);
+/*
+attr 指向线程属性对象
+stackaddr 获取栈起始地址，信息存储在 *stackaddr 中
+stacksize 获取栈大小，信息存在 stacksize 所指的内存中
+成功返回0 失败返回非0的错误码
+*/
+```
+
+单独获取栈的大小或者栈的起始地址
+
+````c
+#include <pthread.h>
+int pthread_attr_setstacksize(pthread_attr_t *attr, size_t stacksize);
+int pthread_attr_getstacksize(const pthread_attr_t *attr, size_t *stacksize);
+int pthread_attr_setstackaddr(pthread_attr_t *attr, void *stackaddr);
+int pthread_attr_getstackaddr(const pthread_attr_t *attr, void **stackaddr);
+````
+
+```c
+/* 对 attr 对象进行初始化 */
+pthread_attr_init(&attr);
+/* 设置栈大小为 4K */
+pthread_attr_setstacksize(&attr, 4096);
+/* 创建新线程 */
+ret = pthread_create(&tid, &attr, new_thread_start, NULL);
+/* 销毁 attr 对象 */
+pthread_attr_destroy(&attr);
+```
+
+#### 11.9.2 分离状态属性
+
+可以使用 pthread_detach 将线程分离，系统自动回收它所占用的资源，如果想在创建线程的时候分离，就修改 pthread_attr_t 中的detachstate 线程属性，让线程一开始就处于分离状态，获取和设置  detachstate 线程属性
+
+```c
+#include <pthread.h>
+int pthread_attr_setdetachstate(pthread_attr_t *attr, int detachstate);
+int pthread_attr_getdetachstate(const pthread_attr_t *attr, int *detachstate);
+/*
+attr pthread_atte_t 对象
+detachstate 取值如下
+*/
+```
+
+![image-20230601144908456](cApplication.assets/image-20230601144908456.png)
+
+### 11.10 线程安全
+
+当我们编写的程序是多线程的程序，就不得不考虑线程安全问题
+
+#### 11.10.1 线程栈
+
+进程中创建的每一个线程都有自己的栈地址空间，称为线程栈，比如调用 pthread_create 创建了新线程，那么该线程就有自己独立的栈地址空间
+
+也就是说，每个线程定义的局部变量都是分配在自己的线程栈当中的
+
+下面代码中，每个线程都调用了相同的函数入口，但是局部变量都是不一样的，分别是自己线程对应的线程 ID
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+static void *new_thread(void *arg)
+{
+    int number = *((int *)arg);
+    unsigned long int tid = pthread_self();
+    printf("当前为<%d>号线程, 线程 ID<%lu>\n", number, tid);
+    return (void *)0;
+}
+
+static int nums[5] = {0, 1, 2, 3, 4};
+int main(int argc, char *argv[])
+{
+    pthread_t tid[5];
+    int j;
+    /* 创建 5 个线程 */
+    for (j = 0; j < 5; j++)
+        pthread_create(&tid[j], NULL, new_thread, &nums[j]);
+    /* 等待线程结束 */
+    for (j = 0; j < 5; j++)
+        pthread_join(tid[j], NULL); // 回收线程
+    exit(0);
+}
+```
+
+#### 11.10.2 可重入函数
+
+先区分单线程程序和多线程程序，单线程程序只有一条执行流，而多线程则存在多条独立并发的执行流，除此之外，执行流的数量也与信号有关，当接收到信号时会跳转执行信号处理函数（从而增加了一条执行流，这是因为信号是异步的，如果是同步就不叫执行流了）
+
+**什么叫可重入函数呢**
+
+就是如果正在执行该函数，然后被信号打断，跳到该函数里重头开始执行，执行完之后再跳回该函数的原来位置继续执行，最后的执行结果与没信号打断的情况的结果一样，就是可重入函数了
+
+![image-20230601150451222](cApplication.assets/image-20230601150451222.png)
+
+
+
+函数被多个执行流同时调用的两种情况：
+
+* 在一个含有信号处理的程序当中，主程序正执行函数 func 此时进程收到接收信号，主程序被打断，跳转到信号处理函数里执行，信号处理函数中也调用 func 函数
+* 多线程环境下，多个线程并发调用同一个函数
+
+**可重入函数的分类**
+
+* 绝对的可重入函数
+
+指的是该函数不管如何调用，都能得到预期的结果
+
+* 带条件的可重入函数
+
+在满足某种/些条件下，该函数是可重入的，不管怎么调用都能得到预期的结果
+
+**绝对可重入函数**
+
+```c
+static int func(int a)
+{
+    int local;
+    int j;
+    for (local = 0, j = 0; j < 5; j++)
+    {
+        local += a * a;
+        a += 2;
+    }
+    return local;
+}
+```
+
+该函数的变量均是局部变量，且参数和返回类型都是值类型，而不是引用类型（指针），这样的函数就是 purecode 可重入，允许该函数的多个副本运行
+
+可重入函数的特点：
+
+* 函数内所使用的变量均为局部变量，也就是说，函数操作的内存地址均为本地栈地址
+* 函数参数和返回值均是值类型
+* 函数内调用的其他函数也均是绝对可重入函数
+
+**带条件的可重入函数**
+
+```c
+static int glob = 0;
+static void func(int loops)
+{
+    int local;
+    int j;
+    for (j = 0; j < loops; j++)
+    {
+        local = glob;
+        local++;
+        //glob = local;  条件：函数内不对该全局变量进行修改
+    }
+}
+```
+
+上面代码中的全局变量如果在多线程下访问，不是原子操作的情况下会导致数据不一致等问题，如果函数对该全局变量只读的话，就是安全的
+
+再来看一个带条件的可重入函数
+
+```c
+static void func(int *arg)
+{
+    int local = *arg;
+    int j;
+    for (j = 0; j < 10; j++)
+        local++;
+    *arg = local;
+}
+```
+
+虽然该函数的参数是指针，而且还修改了指针指向的内存，如果参数传入的是某一个线程的局部变量的话，也就是说该变量其他线程访问不到，是独立的（条件）那就是线程安全的
+
+> 事实上，很多 C 库函数有两个版本，也就是可重入版本和不可重入版本，可重入版本函数名称后面家 _r 比如执行 main 3 ctime 可以查看 ATTRIBUTES
+
+![image-20230601152850688](cApplication.assets/image-20230601152850688.png)
+
+![image-20230601153336168](cApplication.assets/image-20230601153336168.png)
+
+> 函数的线程安全和线程不安全，env 表示该函数内部会读取进程的某个/些环境变量，如 getenv 函数；local 表示本地，就是传入的参数是该线程独有的
+
+#### 11.10.3 线程安全函数
+
+可重入函数一定是线程安全函数，但线程安全函数不一定是可重入函数，也可以是不可重入函数（满足条件的情况下）
+
+![image-20230601153617570](cApplication.assets/image-20230601153617570.png)
+
+#### 11.10.4 一次性初始化
+
+假如我有这样的需求，一个函数中有一段初始化代码，该代码只能被执行一次（哪个线程执行都可以）
+
+```c
+static void func(void)
+{
+    /* 只能执行一次的代码段 */
+    init_once();
+    ...
+}
+```
+
+**pthread_once 函数**
+
+```c
+#include <pthread.h>
+pthread_once_t once_control = PTHREAD_ONCE_INIT;
+int pthread_once(pthread_once_t *once_control, void (*init_routine)(void));
+/*
+在多线程当中尽管该函数会被调用多次，但是会保证 init_routine 函数仅执行一次
+once_control 指向一个 pthread_once_t 类型的变量，该变量在传入之前应该使用 PTHREAD_ONCE_INIT 宏进行初始化
+调用成功返回 0 调用失败则返回错误编码指示原因
+*/
+```
+
+使用实例：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+static int nums[5] = {0, 1, 2, 3, 4};
+/* 初始化一次性函数的变量 */
+static pthread_once_t once_control = PTHREAD_ONCE_INIT;
+/* 执行一次的函数 */
+void once_func(void)
+{
+    printf("一次性函数正在执行\r\n");
+    unsigned long int tid = pthread_self();
+    printf("线程 ID<%lu>\n", tid);
+}
+/* 线程入口函数 */
+static void *new_thread(void *arg)
+{
+    /* 调用一次性函数 */
+    pthread_once(&once_control, once_func);
+    return (void *)0;
+}
+int main(int argc, char *argv[])
+{
+    pthread_t tid[5];
+    int j;
+    /* 创建 5 个线程 */
+    for (j = 0; j < 5; j++)
+        pthread_create(&tid[j], NULL, new_thread, &nums[j]);
+    /* 等待线程结束 */
+    for (j = 0; j < 5; j++)
+        pthread_join(tid[j], NULL); // 回收线程
+    exit(0);
+}
+```
+
+#### 11.10.5 线程特有数据
+
+* 在函数内部为每一个调用线程开辟空间，函数结束释放空间，从而能线程安全地返回指针类型的变量
+
+线程特有数据也叫做线程私有数据，为每一个调用线程分别维护一份变量的副本，每个线程通过特有数据键访问时，这个特有数据键都会获取到本线程绑定的变量副本。从而避免变量成为多个线程间的共享数据
+
+当一个非线程安全的函数内部维持一个缓冲区，并且将指向缓冲区的指针返回出去时，就会使得各个线程对该函数内部的缓冲进行多线程操作，所以应该为每一个调用线程分配属于该线程的私有数据区，为每一个调用线程分别维护一份变量的副本
+
+**pthread_key_create 函数**
+
+在为线程分配私有数据区之前，需要创建一个特有的数据键，并且只需要调用一次即可
+
+```c
+#include <pthread.h>
+int pthread_key_create(pthread_key_t *key, void (*destructor)(void*));
+/*
+key 调用该函数会创建一个特有的数据键，并将key指针指向的缓冲区返回给调用者
+destructor 函数指针，指向一个自定义函数
+该函数通常用于释放与特有数据关联的线程私有数据区占用的内存空间（类似于C++中的析构函数）
+成功返回0，失败返回一个错误编号 errno
+*/
+```
+
+**pthread_setspecific 函数**
+
+调用上个函数创建特有数据键后，需要为调用线程分配私有数据缓冲区，如 malloc 申请堆内存，每个调用线程分配一次，分配好之后调用 pthread_setspecific 函数，该函数执行了如下操作：
+
+* 保存指向线程私有数据缓冲区的指针
+
+* 将其与特有数据键以及当前调用线程关联起来
+
+```c
+#include <pthread.h>
+int pthread_setspecific(pthread_key_t key, const void *value);
+/*
+key 特有数据键
+value 指向由调用者分配的一块内存作为线程的私有数据缓冲区，当线程终止时，会自动调用参数 key 指定的特有数据键对应的解构函数来释放这一块动态申请的内存空间
+调用成功返回0 失败将返回一个错误编码
+*/
+```
+
+**pthread_getspecific 函数**
+
+获取调用线程的私有数据区
+
+```c
+#include <pthread.h>
+void *pthread_getspecific(pthread_key_t key);
+/*
+key 特有数据键
+返回当前调用线程关联到特有数据键的私有数据缓冲区，如果没有设置私有数据则返回 NULL （可以由此判断当前线程是否初次调用该函数）
+*/
+```
+
+**pthread_key_delete 函数**
+
+删除特有数据键
+
+```c
+#include <pthread.h>
+int pthread_key_delete(pthread_key_t key);
+/*
+key 要删除的键，成功返回0 失败返回错误编号
+*/
+```
+
+该函数不会触发解构函数，不会释放资源，所以通常在调用删除键函数之前确保：
+
+* 所有线程已经释放了私有数据区（显示调用解构函数或线程终止）
+* 参数 key 指定了特有数据键将不再使用
+
+线程特有数据的使用实例：
+
+```c
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <pthread.h>
+#define MAX_ERROR_LEN 256
+
+/* 初始化一次性代码变量 */
+static pthread_once_t once = PTHREAD_ONCE_INIT;
+/* 数据键 */
+static pthread_key_t strerror_key;
+
+/* 解构函数 */
+static void destructor(void *buf)
+{
+    free(buf); // 释放内存
+}
+
+static void create_key(void)
+{
+    /* 创建一个键(key)，并且绑定键的解构函数 */
+    if (pthread_key_create(&strerror_key, destructor))
+        pthread_exit(NULL);
+}
+
+/******************************
+ * 对 strerror 函数重写
+ * 使其变成为一个线程安全函数
+ ******************************/
+
+static char *my_strerror(int errnum)
+{
+    char *buf;
+    /* 创建一个键(只执行一次 create_key) */
+    if (pthread_once(&once, create_key))
+        pthread_exit(NULL);
+    /* 获取调用线程的私有数据缓冲区，如果为空则开辟空间 */
+    buf = pthread_getspecific(strerror_key);
+    if (NULL == buf)
+    {                                // 首次调用 my_strerror 函数，则需给调用线程分配线程私有数据
+        buf = malloc(MAX_ERROR_LEN); // 分配内存
+        if (NULL == buf)
+            pthread_exit(NULL);
+        /* 保存缓冲区地址,与键、线程关联起来 */
+        if (pthread_setspecific(strerror_key, buf))
+            pthread_exit(NULL);
+    }
+    if (errnum < 0 || errnum >= _sys_nerr || NULL == _sys_errlist[errnum])
+        snprintf(buf, MAX_ERROR_LEN, "Unknown error %d", errnum);
+    else
+    {
+        /* 将错误信息拷贝到该线程的私有数据缓冲区 */
+        strncpy(buf, _sys_errlist[errnum], MAX_ERROR_LEN - 1);
+        buf[MAX_ERROR_LEN - 1] = '\0'; // 终止字符
+    }
+    return buf;
+}
+
+/* 线程入口函数 */
+static void *thread_start(void *arg)
+{
+    char *str = my_strerror(2); // 获取错误编号为 2 的错误描述信息（事实上返回的就是全局变量的指针）
+    printf("子线程: str (%p) = %s\n", str, str);
+    pthread_exit(NULL);
+}
+
+int main(int argc, char *argv[])
+{
+    char *str = NULL;
+    int ret;
+    str = my_strerror(1); // 获取错误编号为 1 的错误描述信息
+    pthread_t tid[5];
+    int j;
+
+    /* 创建 5 个线程 */
+    for (j = 0; j < 5; j++)
+        pthread_create(&tid[j], NULL, thread_start, NULL);
+    /* 等待线程结束 */
+    for (j = 0; j < 5; j++)
+        pthread_join(tid[j], NULL); // 回收线程
+
+    printf("主线程: str (%p) = %s\n", str, str);
+    exit(0);
+}
+```
+
+#### 11.10.6 线程局部存储
+
+通常情况下，程序中定义的全局变量是进程中所有线程共享的，所有线程都可以访问这些全局变量。线程局部存储在定义全局或静态变量时，使用 __thread 修饰符修饰，每一个线程都会拥有一份对该变量的拷贝。线程局部存储中的变量将一直存在，直至线程终止，届时会自动释放这一存储
+
+> 使用要比线程特有数据简单，只需要在全局或静态变量的声明中包含 __thread 修改符即可
+
+```c
+static __thread char buf[512];
+```
+
+但凡带有这种修饰符的变量，每个线程都拥有一份对变量的拷贝，从而避免了全局变量成为多个线程的共享数据
+
+关于线程局部变量的声明和使用，需要注意：
+
+* 如果变量声明中使用了关键字 static 或 extern，那么关键字 __thread 必须紧随其后
+* 与一般的全局或静态变量声明一样，线程局部变量在声明时可以设置一个初始值
+* 可以使用 C 语言取值操作符 & 来获取线程局部变量的地址
+
+**__thread 的使用**
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+static __thread char buf[100];
+static void *thread_start(void *arg)
+{
+    strcpy(buf, "Child Thread\n");
+    printf("子线程: buf (%p) = %s", buf, buf);
+    pthread_exit(NULL);
+}
+
+int main(int argc, char *argv[])
+{
+    pthread_t tid;
+    int ret;
+    strcpy(buf, "Main Thread\n");
+    /* 创建子线程 */
+    if (ret = pthread_create(&tid, NULL, thread_start, NULL))
+    {
+        fprintf(stderr, "pthread_create error: %d\n", ret);
+        exit(-1);
+    }
+    /* 等待回收子线程 */
+    if (ret = pthread_join(tid, NULL))
+    {
+        fprintf(stderr, "pthread_join error: %d\n", ret);
+        exit(-1);
+    }
+    printf("主线程: buf (%p) = %s", buf, buf);
+    exit(0);
+}
+```
+
+输出：
+
+![](cApplication.assets/image-20230601182458835.png)
+
+可以看到尽管表面上看是一个全局变量，但是在这两个线程里该变量的地址是不同的
+
+### 11.11 更多细节问题
+
+#### 11.11.1 线程与信号
+
+信号是进程与进程之间通信的方法之一，当进程是多线程的话会将问题变得更加复杂
+
+**信号如何映射到线程**
+
+* 当一个多线程的进程接收到一个信号时，且该信号绑定了处理函数，那么进程会任意选择一个线程去处理，因为对单个信号进程重复处理是没有任何意义的
+* 其实信号掩码是属于线程层面的，之前的那个 sigprocmask 函数可以设置进程的信号掩码，其实这个函数只能使用在单线程程序中，设置的也只是该线程的信号掩码。对于多线程的情况，可以使用 pthread_sigmask 函数来设置他们各自的信号掩码
+* 针对整个进程所挂起的信号以及每个线程挂起的信号，内核都会分别维护和记录
+
+**线程的信号掩码**
+
+使用 pthread_sigmask 函数来设置各个线程的信号掩码
+
+```c
+#include <signal.h>
+int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset);
+/*
+用法和 sigprocmask 函数一样
+*/
+```
+
+**向线程发送信号**
+
+之前调用  kill 或者 sigqueue 发送的信号都是进程层面的，进程会调用某一个线程去处理信号，可以使用以下函数给同一进程下指定的线程发送信号
+
+```c
+#include <signal.h>
+int pthread_kill(pthread_t thread, int sig);
+/*
+thread 线程 ID 
+sig 0表示不发送信号
+调用成功返回0 失败返回错误编号
+*/
+```
+
+相应的，也有 pthread_sigqueue 函数
+
+```c
+include <signal.h>
+#include <pthread.h>
+int pthread_sigqueue(pthread_t thread, int sig, const union sigval value);
+/*
+thread 线程ID
+sig 0表示不发送信号
+value 伴随数据
+调用成功返回0 失败返回错误编号
+*/
+```
+
+**异步信号安全函数**
+
+异步信号安全函数指的是可以在信号处理函数中可以被安全调用的线程安全函数， 所以它比线程安全函数的要求更为严格，可重入函数满足这一要求
+
+## 12. 线程同步
+
+### 12.1 为什么需要线程同步
+
+* 线程同步是为了对共享资源的访问进行保护
+* 保护的目的是为了解决数据一致性的问题
+* 出现数据一致性问题其本质在于进程中的多个线程对共享资源的并发访问（同时访问）
+
+当一个线程在修改变量时，其他的线程可能会看到不一样的值
+
+![image-20230601205158951](cApplication.assets/image-20230601205158951.png)
+
+比如，两个线程同时对一个全局变量进程+1，最后得到的结果与预期不一样
+
+**如何解决该问题？**
+
+原子操作，线程锁呗
+
+### 12.2 互斥锁
+
+#### 12.2.1 互斥锁的初始化
+
+**使用 PTHREAD_MUTEX_INITIALIZER 宏初始化互斥锁**
+
+互斥锁使用 pthread_mutex_t 数据类型表示，这是一个结构体，宏其实是对该结构体赋值操作的封装
+
+```c
+# define PTHREAD_MUTEX_INITIALIZER \
+{ { 0, 0, 0, 0, 0, __PTHREAD_SPINS, { 0, 0 } } }
+```
+
+```c
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+```
+
+**使用 pthread_mutex_init 函数初始化互斥锁**
+
+```c
+#include <pthread.h>
+int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr);
+/*
+mutex 互斥锁指针
+attr 指向一个 pthread_mutexattr_t 类型，用于定义互斥锁的属性，设置为 NULL 表示默认
+成功返回0失败返回 非0 错误码
+*/
+```
+
+初始化实例：
+
+```c
+pthread_mutex_t mutex;
+pthread_mutex_init(&mutex, NULL);
+```
+
+```c
+pthread_mutex_t *mutex = malloc(sizeof(pthread_mutex_t));
+pthread_mutex_init(mutex, NULL);
+```
+
+#### 12.2.2 互斥锁加锁和解锁
+
+```c
+#include <pthread.h>
+int pthread_mutex_lock(pthread_mutex_t *mutex);
+int pthread_mutex_unlock(pthread_mutex_t *mutex);
+/*
+调用成功返回0，调用失败返回非0错误码
+调用之后会阻塞，直到原来的锁解锁，然后拿到锁才会返回
+*/
+```
+
+以下行为均属于错误：
+
+* 对处于未锁定状态的互斥锁进行解锁操作
+* 解锁由其它线程锁定的互斥锁
+
+#### 12.2.3 pthread_mutex_trylock 函数
+
+该函数不会阻塞，拿不到锁就返回错误码 EBUSY
+
+```c
+#include <pthread.h>
+int pthread_mutex_trylock(pthread_mutex_t *mutex);
+/*
+成功返回 0 失败返回错误码
+*/
+```
+
+#### 12.2.4 销毁互斥锁
+
+```c
+#include <pthread.h>
+int pthread_mutex_destroy(pthread_mutex_t *mutex);
+/*
+成功返回 0 失败返回错误码
+*/
+```
+
+以下行为均属于错误：
+
+* 不能销毁还没有解锁的互斥锁，否则错误
+* 不能销毁没有初始化的互斥锁
+
+销毁之后需要再次进行初始化才能使用
+
+#### 12.2.5 互斥锁死锁
+
+当线程 A 锁住互斥锁 1 的同时在等待互斥锁 2，线程 B 锁住互斥锁 2的同时在等互斥锁 1 ，就会发生死锁
+
+```c
+// 线程 A
+pthread_mutex_lock(mutex1);
+pthread_mutex_lock(mutex2);
+// 线程 B
+pthread_mutex_lock(mutex2);
+pthread_mutex_lock(mutex1);
+```
+
+对于这种情况，有一种解决方法：
+
+先使用 pthread_mutex_lock 锁定第一个互斥锁，然后使用 try 锁定其余的互斥锁，如果任意一个返回 EBUSY 就释放所有的锁
+
+#### 12.2.6 互斥锁的属性
+
+初始化和销毁互斥锁属性对象
+
+```c
+#include <pthread.h>
+int pthread_mutexattr_destroy(pthread_mutexattr_t *attr);
+int pthread_mutexattr_init(pthread_mutexattr_t *attr);
+/*
+调用成功返回 0，失败将返回非 0 值的错误码
+*/
+```
+
+互斥锁的属性有很多，如共享属性，健壮属性，类型属性，这里说一下类型属性：
+
+![image-20230601214405322](cApplication.assets/image-20230601214405322.png)
+
+![image-20230601214424809](cApplication.assets/image-20230601214424809.png)
+
+**获取和设置互斥锁的类型属性**
+
+```c
+#include <pthread.h>
+int pthread_mutexattr_gettype(const pthread_mutexattr_t *attr, int *type);
+int pthread_mutexattr_settype(pthread_mutexattr_t *attr, int type);
+/*
+*/
+```
+
+互斥锁的完整使用
+
+```c
+pthread_mutex_t mutex;
+pthread_mutexattr_t attr;
+/* 初始化互斥锁属性对象 */
+pthread_mutexattr_init(&attr);
+/* 将类型属性设置为 PTHREAD_MUTEX_NORMAL */
+pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_NORMAL);
+/* 初始化互斥锁 */
+pthread_mutex_init(&mutex, &attr);
+
+/* 加锁解锁操作 */
+......
+/* 使用完之后 */
+pthread_mutexattr_destroy(&attr);
+pthread_mutex_destroy(&mutex);
+```
+
+### 12.3 条件变量
+
+条件变量是线程可用的另外一种同步机制，用于自动阻塞线程，通常和互斥锁一起搭配使用
+
+* 一个线程等待某个条件满足而被阻塞
+* 在另外一个线程中，条件满足时发出信号
+
+**生产-消费模式**
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <string.h>
+
+static pthread_mutex_t mutex;
+static int g_avail = 0;
+/* 消费者线程 */
+static void *consumer_thread(void *arg)
+{
+    for (;;)
+    {
+        pthread_mutex_lock(&mutex); // 上锁
+        while (g_avail > 0)
+            g_avail--;                // 消费
+        pthread_mutex_unlock(&mutex); // 解锁
+    }
+    return (void *)0;
+}
+/* 主线程（生产者） */
+int main(int argc, char *argv[])
+{
+    pthread_t tid;
+    int ret;
+    /* 初始化互斥锁 */
+    pthread_mutex_init(&mutex, NULL);
+    /* 创建新线程 */
+    ret = pthread_create(&tid, NULL, consumer_thread, NULL);
+    if (ret)
+    {
+        fprintf(stderr, "pthread_create error: %s\n", strerror(ret));
+        exit(-1);
+    }
+    for (;;)
+    {
+        pthread_mutex_lock(&mutex);   // 上锁
+        g_avail++;                    // 生产
+        pthread_mutex_unlock(&mutex); // 解锁
+    }
+    exit(0);
+}
+```
+
+#### 12.3.1 条件变量初始化
+
+条件变量使用 Pthread_cond_t 数据类型来表示，使用之前要初始化
+
+```c
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+```
+
+**初始化与销毁**
+
+```c
+#include <pthread.h>
+int pthread_cond_destroy(pthread_cond_t *cond);
+int pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *attr);
+/*
+和互斥锁一样用法
+pthread_condattr_t 是条件变量的属性
+*/
+```
+
+* 在使用条件变量之前必须对条件变量进行初始化操作，使用 PTHREAD_COND_INITIALIZER 宏或者函数 pthread_cond_init 都行
+* 对已经初始化的条件变量再次进行初始化，将可能会导致未定义行为
+* 对没有进行初始化的条件变量进行销毁，也将可能会导致未定义行为
+* 对某个条件变量而言，仅当没有任何线程等待它时，将其销毁才是最安全的
+* 经 pthread_cond_destroy 销毁的条件变量， 可以再次调用 pthread_cond_init 对其进行重新初始化
+
+#### 12.3.2 通知和等待条件变量
+
+条件变量的主要操作便是发送信号和等待信号
+
+**条件变量发送信号**
+
+```c
+#include <pthread.h>
+int pthread_cond_broadcast(pthread_cond_t *cond);
+int pthread_cond_signal(pthread_cond_t *cond);
+/*
+cond 指向目标条件变量
+调用成功返回0 失败返回非0错误码
+*/
+```
+
+这两个函数的区别在于，前者能唤醒所有等待在 pthread_cond_wait 的线程，而后者至少能唤醒一个线程
+
+**条件变量等待信号**
+
+```c
+#include <pthread.h>
+int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex);
+/*
+cond 需要等待的条件变量
+mutex 指向一个互斥锁变量
+调用成功返回 0；失败将返回一个非 0 值的错误码
+*/
+```
+
+执行该函数之后，线程阻塞并且释放所有锁，当被唤醒时再上锁
+
+#### 12.3.3 条件变量的判断条件
+
+```c
+/* 消费者线程 */
+static void *consumer_thread(void *arg)
+{
+    for (;;)
+    {
+
+        pthread_mutex_lock(&mutex); // 上锁
+        while(g_avail <= 0) // 这里为什么要使用 while ？
+        pthread_cond_wait(&cond, &mutex);// 这里线程阻塞并且释放所有锁，当被唤醒时再上锁
+
+        while (g_avail > 0)
+            g_avail--;                // 消费
+        pthread_mutex_unlock(&mutex); // 解锁
+    }
+    return (void *)0;
+}
+```
+
+这里为什么要使用 while 循环而不是 if 来判断呢？
+
+首先 while 与 if 的区别就是 while 的话如果 wait 函数返回之后还要再对条件进行判断，而 if 则没有二次判断
+
+* 从 pthread_cond_wait 返回后，并不能确定判断条件是真还是假，其理由如下：
+  当有多于一个线程在等待条件变量时，任何线程都有可能会率先醒来获取互斥锁， 率先醒来获取到互斥锁的线程可能会对共享变量进行修改，进而改变判断条件的状态。譬如示例代码 12.3.2 中，如果有两个或更多个消费者线程， 当其中一个消费者线程从 pthread_cond_wait 返回后，它会将全局共享变量 g_avail 的值变成 0， 导致判断条件的状态由真变成假
+* 可能会发出虚假的通知
+
+#### 12.3.4 条件变量的属性
+
+条件变量包括两个属性：进程共享属性和时钟属性。
+
+每个属性都提供了相应的 get 方法和 set 方法，自行查阅
+
+### 12.4 自旋锁
+
+自旋锁与互斥锁的区别就是，互斥锁拿不到锁时就会让线程陷入阻塞状态，而自旋锁会让线程反复查看锁的状态，直到获取到锁，这操作确实会吃 CPU
+
+自旋锁在内核代码中使用较多，下面是自旋锁与互斥锁的区别：
+
+![image-20230601224112824](cApplication.assets/image-20230601224112824.png)
+
+#### 12.4.1 自旋锁初始化
+
+```c
+#include <pthread.h>
+int pthread_spin_destroy(pthread_spinlock_t *lock);
+int pthread_spin_init(pthread_spinlock_t *lock, int pshared);
+/*
+lock 自旋锁指针
+pshared 自旋锁的共享属性
+调用成功的情况下返回 0；失败将返回一个非 0 值的错误码
+PTHREAD_PROCESS_SHARED： 共享自旋锁。该自旋锁可以在多个进程中的线程之间共享
+PTHREAD_PROCESS_PRIVATE： 私有自旋锁。只有本进程内的线程才能够使用该自旋锁
+*/
+```
+
+#### 12.4.2 自旋锁加锁和解锁
+
+```c
+#include <pthread.h>
+int pthread_spin_lock(pthread_spinlock_t *lock);
+int pthread_spin_trylock(pthread_spinlock_t *lock);
+int pthread_spin_unlock(pthread_spinlock_t *lock);
+/*
+调用成功返回 0，失败将返回一个非 0 值的错误码
+*/
+```
+
+自旋锁的效率要比互斥锁的效率高
+
+> 在 vscode 里定义自旋锁结构体变量会发现未找到该结构体，通过转到声明发现需要定义宏 __USE_XOPEN2K ，但是编译能过，说明在  /usr/include/stdio.h:27:0 里已经定义了该宏，只是 vscode 里跨了头文件的宏定义会不显示其作用的效果
+
+
+
+### 12.5 读写锁
+
+读写锁有三种状态：读模式下的加锁状态，写模式下的加锁状态和不加锁状态。一次只有一个线程可以占有写模式的读写锁，但是可以有多个线程同时占有读模式的读写锁  
+
+![image-20230602101741425](cApplication.assets/image-20230602101741425.png)
+
+该锁有两个规则：
+
+![image-20230602101834356](cApplication.assets/image-20230602101834356.png)
+
+读写锁适合于对共享数据读的次数远大于写的次数的情况
+
+> 读写锁又叫做共享互斥锁，当读模式锁住时，又叫做共享模式锁住，当写模式锁住时，又叫互斥模式锁住
+
+#### 12.5.1 读写锁的初始化
+
+读写锁用 pthread_rwlock_t 数据类型表示，也可以用宏或函数对其初始化，可以使用 pthread_rwlock_destroy 将其摧毁
+
+```c
+pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
+```
+
+```c
+#include <pthread.h>
+int pthread_rwlock_destroy(pthread_rwlock_t *rwlock);
+int pthread_rwlock_init(pthread_rwlock_t *rwlock, const pthread_rwlockattr_t *attr);
+/*
+调用成功返回 0，失败将返回一个非 0 值的错误码
+attr 锁属性，不多解释
+*/
+```
+
+#### 12.5.2 读写锁上锁和解锁
+
+```c
+#include <pthread.h>
+int pthread_rwlock_rdlock(pthread_rwlock_t *rwlock); // 读模式上锁
+int pthread_rwlock_wrlock(pthread_rwlock_t *rwlock);
+// 写模式上锁
+int pthread_rwlock_unlock(pthread_rwlock_t *rwlock);
+// 解锁
+/*
+调用成功返回 0，失败返回一个非 0 值的错误码
+*/
+```
+
+**非阻塞的方法**
+
+```c
+#include <pthread.h>
+int pthread_rwlock_tryrdlock(pthread_rwlock_t *rwlock);
+int pthread_rwlock_trywrlock(pthread_rwlock_t *rwlock);
+/*
+加锁成功返回 0，加锁失败则返回 EBUSY
+*/
+```
+
+使用实例
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <string.h>
+static pthread_rwlock_t rwlock; // 定义读写锁
+
+static int g_count = 0;
+static void *read_thread(void *arg)
+{
+    int number = *((int *)arg);
+    int j;
+    for (j = 0; j < 10; j++)
+    {
+        pthread_rwlock_rdlock(&rwlock); // 以读模式获取锁
+        printf("读线程<%d>, g_count=%d\n", number + 1, g_count);
+        pthread_rwlock_unlock(&rwlock); // 解锁
+        sleep(1);
+    }
+    return (void *)0;
+}
+static void *write_thread(void *arg)
+{
+    int number = *((int *)arg);
+    int j;
+    for (j = 0; j < 10; j++)
+    {
+        pthread_rwlock_wrlock(&rwlock); // 以写模式获取锁
+        printf("写线程<%d>, g_count=%d\n", number + 1, g_count += 20);
+        pthread_rwlock_unlock(&rwlock); // 解锁
+        sleep(1);
+    }
+    return (void *)0;
+}
+static int nums[5] = {0, 1, 2, 3, 4};
+int main(int argc, char *argv[])
+{
+    pthread_t tid[10];
+    int j;
+    /* 对读写锁进行初始化 */
+    pthread_rwlock_init(&rwlock, NULL);
+    /* 创建 5 个读 g_count 变量的线程 */
+    for (j = 0; j < 5; j++)
+        pthread_create(&tid[j], NULL, read_thread, &nums[j]);
+    /* 创建 5 个写 g_count 变量的线程 */
+    for (j = 0; j < 5; j++)
+        pthread_create(&tid[j + 5], NULL, write_thread, &nums[j]);
+    /* 等待线程结束 */
+    for (j = 0; j < 10; j++)
+        pthread_join(tid[j], NULL); // 回收线程
+    /* 销毁自旋锁 */
+    pthread_rwlock_destroy(&rwlock);
+    exit(0);
+}
+```
+
+#### 12.5.3 读写锁的属性
+
+读写锁的属性对象也需要进行初始化，读写锁只有共享进程属性
+
+```c
+#include <pthread.h>
+int pthread_rwlockattr_destroy(pthread_rwlockattr_t *attr);
+int pthread_rwlockattr_init(pthread_rwlockattr_t *attr);
+/*
+函数调用成功返回 0，失败将返回一个非 0 值的错误码
+*/
+```
+
+**获取和设置属性**
+
+```c
+#include <pthread.h>
+int pthread_rwlockattr_getpshared(const pthread_rwlockattr_t *attr, int *pshared);
+int pthread_rwlockattr_setpshared(pthread_rwlockattr_t *attr, int pshared);
+/*
+attr 属性对象
+pshared 将属性保存到 pshared 中
+成功返回0 失败返回非0的错误码
+*/
+```
+
+* PTHREAD_PROCESS_SHARED： 共享读写锁。该读写锁可以在多个进程中的线程之间共享
+* PTHREAD_PROCESS_PRIVATE： 私有读写锁。只有本进程内的线程才能够使用该读写锁，这是读写锁共享属性的默认值
+
+完整使用：
+
+```c
+pthread_rwlock_t rwlock; //定义读写锁
+pthread_rwlockattr_t attr; //定义读写锁属性
+/* 初始化读写锁属性对象 */
+pthread_rwlockattr_init(&attr);
+/* 将进程共享属性设置为 PTHREAD_PROCESS_PRIVATE */
+pthread_rwlockattr_setpshared(&attr, PTHREAD_PROCESS_PRIVATE);
+/* 初始化读写锁 */
+pthread_rwlock_init(&rwlock, &attr);
+......
+/* 使用完之后 */
+pthread_rwlock_destroy(&rwlock); //销毁读写锁
+pthread_rwlockattr_destroy(&attr); //销毁读写锁属性对象
+```
+
+## 13. 高级 I/O
+
+### 13.1 非阻塞 I/O
+
+阻塞其实就是进入了休眠状态，交出了 CPU 的控制权。当对文件进行读操作时，如果数据没有准备好，那么就让读文件的线程阻塞，直到有数据可读才被唤醒，如果是非阻塞，即使没有数据可读，也不会被阻塞，而是立即返回
+
+#### 13.1.1 阻塞 I/O 与非阻塞 I/O 读文件
+
+使用 open 打开文件，如果指定了 O_NONBLOCK 标志，那么就是非阻塞读取，默认是阻塞读取。前面也说过，普通文件来说，指定与未指定 O_NONBLOCK 是对普通文件没有影响的（可以多个描述符同时读写操作一个文件）
+
+**阻塞读鼠标设备文件**
+
+普通文件没法设置阻塞标志来实现阻塞读取，那么我们使用阻塞来读取设备文件
+
+鼠标设备文件在 /dev/input/mouse0 ，可以通过 od 指令进行测试
+
+```sh
+sudo od -x /dev/input/mouse0
+```
+
+使用阻塞式读取鼠标设备文件：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+int main(void)
+{
+    char buf[100];
+    int fd, ret;
+    /* 打开文件 默认以阻塞方式打开 */
+    fd = open("/dev/input/mouse0", O_RDONLY);
+    if (-1 == fd)
+    {
+        perror("open error");
+        exit(-1);
+    }
+    /* 读文件 */
+    memset(buf, 0, sizeof(buf));
+    ret = read(fd, buf, sizeof(buf));
+    if (0 > ret)
+    {
+        perror("read error");
+        close(fd);
+        exit(-1);
+    }
+    printf("成功读取<%d>个字节数据\n", ret);
+    /* 关闭文件 */
+    close(fd);
+    exit(0);
+}
+```
+
+#### 13.1.2 阻塞 I/O 的优点与缺点
+
+很显然，阻塞 io 能让出 cpu ，提高 cpu 的处理效率。但是也有用到非阻塞 io 情况
+
+#### 13.1.3 使用非阻塞 I/O 实现并发读取
+
+**读取键盘和鼠标**
+
+键盘是标准输入设备 stdin ，进程会从父进程中继承该设备文件描述符（0），直接使用即可，不用再 open
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+
+#define MOUSE "/dev/input/event3"
+int main(void)
+{
+    char buf[100];
+    int fd, ret;
+    /* 打开鼠标设备文件 */
+    fd = open(MOUSE, O_RDONLY);
+    if (-1 == fd)
+    {
+        perror("open error");
+        exit(-1);
+    }
+    /* 读鼠标 */
+    memset(buf, 0, sizeof(buf));
+    ret = read(fd, buf, sizeof(buf));
+    printf("鼠标: 成功读取<%d>个字节数据\n", ret);
+    /* 读键盘 */
+    memset(buf, 0, sizeof(buf));
+    ret = read(0, buf, sizeof(buf));
+    printf("键盘: 成功读取<%d>个字节数据\n", ret);
+    /* 关闭文件 */
+    close(fd);
+    exit(0);
+}
+```
+
+上面操作中，鼠标设备采用了阻塞读取，也就是说，只有移动了鼠标，程序才会运行下去，键盘才能够读取，这样就不符合预期的键盘和鼠标同时读取，所以需要采用非阻塞 IO 的方法
+
+### 13.2 I/O 多路复用
+
+但是使用非阻塞 IO 的方法需要不断轮询，造成 CPU 占用率很高，这个问题需要解决
+
+#### 13.2.1 什么是 IO 多路复用
+
+多路复用通过一种机制监视多个文件描述符，一旦某个文件描述符可以执行 IO 时，能够通知应用程序进行相应的读写操作，一般多用于并发式非阻塞 IO
+
+#### 13.2.2 select 函数介绍
+
+系统调用 select 用于执行 IO 多路复用操作，调用 select 会一直阻塞，直到某一个或多个文件描述符成为就绪态
+
+```c
+#include <sys/select.h>
+int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout);
+/* 
+有三个 fd_set 类型的参数（全部设置为 NULL= sleep）：
+readfds 检测读是否就绪的文件描述符集合
+writefds 检测写是否就绪的文件描述符集合
+exceptfds 检测异常是否发生的文件描述符集合
+nfds 表示最大文件描述符编号值 +1（三个集合中的最大文件描述符编号值）
+timeout 指select 阻塞的时间上限，设置为 NULL 表示一直阻塞，直到某个文件描述符就绪，设置为 0表示不阻塞
+*/
+```
+
+使用实例：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/select.h>
+#define MOUSE "/dev/input/mouse0"
+
+int main(void)
+{
+    char buf[100];
+    int fd, ret = 0, flag;
+    fd_set rdfds; // 信号集
+    int loops = 100;
+    /* 非阻塞打开鼠标设备文件 */
+    fd = open(MOUSE, O_RDONLY | O_NONBLOCK);
+    if (-1 == fd)
+    {
+        perror("open error");
+        exit(-1);
+    }
+    /* 将键盘设置为非阻塞方式 */
+    flag = fcntl(0, F_GETFL); // 先获取原来的 flag
+    flag |= O_NONBLOCK;       // 将 O_NONBLOCK 标准添加到 flag
+    fcntl(0, F_SETFL, flag);  // 重新设置 flag
+    /* 同时读取键盘和鼠标 */
+    while (loops--)
+    {
+        FD_ZERO(&rdfds);
+        FD_SET(0, &rdfds);  // 添加键盘到符号集
+        FD_SET(fd, &rdfds); // 添加鼠标到符号集
+        ret = select(fd + 1, &rdfds, NULL, NULL, NULL);
+        if (0 > ret)
+        {
+            perror("select error");
+            goto out;
+        }
+        else if (0 == ret)
+        {
+            fprintf(stderr, "select timeout.\n");
+            continue;
+        }
+        /* 当 ret 大于0 时表示有符号处于就绪状态 */
+        /* 检查键盘是否为就绪态 */
+        if (FD_ISSET(0, &rdfds))
+        {
+            ret = read(0, buf, sizeof(buf));
+            if (0 < ret)
+                printf("键盘: 成功读取<%d>个字节数据\n", ret);
+        }
+        /* 检查鼠标是否为就绪态 */
+        if (FD_ISSET(fd, &rdfds))
+        {
+            ret = read(fd, buf, sizeof(buf));
+            if (0 < ret)
+                printf("鼠标: 成功读取<%d>个字节数据\n", ret);
+        }
+    }
+
+out:
+    /* 关闭文件 */
+    close(fd);
+    exit(ret);
+}
+```
+
+当有符号处于就绪状态时，返回 ret 大于 0 ，此时通过 &rdfds 返回就绪状态的符号集
+
+#### 13.2.3 poll 函数
+
+系统调用 poll 与 select 很相似，但是在添加符号集的时候要构造一个结构体
+
+```c
+#include <poll.h>
+int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+/*
+fds struct pollfd 数组，每个元素都会指定一个文件描述符以及我们所关心的条件
+nfds 指定了 fds 数组的元素个数
+timeout 
+-1 一直阻塞
+0 不会阻塞
+>0 毫秒
+*/
+```
+
+struct pollfd 结构体
+
+```c
+struct pollfd {
+    int fd; /* file descriptor */
+    short events; /* requested events */
+    short revents; /* returned events */
+};
+/*
+fd 文件描述符 
+当函数返回时， 设置 events 后返回 revents
+*/
+```
+
+![image-20230602151545396](cApplication.assets/image-20230602151545396.png)
+
+可以选择一个或者多个标志
+
+**poll 函数返回值**
+
+![image-20230602151827917](cApplication.assets/image-20230602151827917.png)
+
+就是说，当有符号设备就绪时，poll 函数就会返回大于 0 的数，这时候，就去查看各个结构体的 revents 的值，如果不为 0 则表示该结构体对应的设备就绪
+
+> 注意：当一个设备文件就绪的话，要去执行 io 操作以清楚就绪状态，否则该状态将一直存在
+
+### 13.3 异步 IO
+
+异步 IO 就是当某个设备就绪时，内核向进程发送一个信号，这个信号通常是 SIGIO ，当进程收到信号时，便会在处理函数里执行 IO 操作
+
+使用异步 IO 需要按照如下步骤执行:
+
+![image-20230602153735790](cApplication.assets/image-20230602153735790.png)
+
+**O_ASYNC 标志**
+
+用于使能文件描述符的异步 IO 时间，当可以执行 IO 操作时，内核向接收进程发送（进程可以设置）信号
+
+> 调用 open 无法设置该标志，可以使用 fcntl 函数添加
+
+```c
+int flag;
+flag = fcntl(0, F_GETFL); //先获取原来的 flag
+flag |= O_ASYNC; //将 O_ASYNC 标志添加到 flag
+fcntl(fd, F_SETFL, flag); //重新设置 flag
+```
+
+**设置异步 IO 时间的接收进程**
+
+使用 fcntl 设置
+
+```c
+fcntl(fd, F_SETOWN, getpid());
+```
+
+**注册 SIGIO 信号的处理函数**
+
+使用 signal 或者 sigaction 函数进行注册
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <string.h>
+#include <signal.h>
+#include <fcntl.h>
+static int fd;
+static char buf[100];
+
+void handle_func(int arg)
+{
+    int ret = 0;
+    /* 读文件 */
+    ret = read(fd, buf, sizeof(buf));
+    if (0 > ret)
+    {
+        perror("read error");
+        close(fd);
+        exit(-1);
+    }
+    printf("成功读取<%d>个字节数据\n", ret);
+}
+
+int main(void)
+{
+    int flag;
+    /* 打开文件 */
+    fd = open("/dev/input/mouse0", O_RDONLY | O_NONBLOCK);
+    if (-1 == fd)
+    {
+        perror("open error");
+        exit(-1);
+    }
+    /* 指定标志使能异步 IO */
+    flag = fcntl(fd, F_GETFL);
+    flag |= O_ASYNC;
+    fcntl(fd, F_SETFL,flag);
+    /* 设置接收进程 */
+    fcntl(fd, F_SETOWN, getpid());
+    /* 注册处理函数 */
+    signal(SIGIO, handle_func);
+    /* 初始化缓存 */
+    memset(buf, 0, sizeof(buf));
+    while(1);
+    /* 关闭文件 */
+    close(fd);
+    exit(0);
+}
+```
+
+### 13.4 优化异步 I/O
+
+在一个需要同时检查大量文件描述符的程序中，与 select 和 poll 相比，异步 IO 更加显优势，因为 select 和 poll 内部的实现是轮询，当文件描述符较多时，会消耗大量 CPU 资源
+
+> 或者使用 epoll 解决 select 或 poll 性能低的问题
+
+上面的异步 IO 实现存在缺陷如下：
+
+![image-20230602160633925](cApplication.assets/image-20230602160633925.png)
+
+#### 13.4.1 使用实时信号代替默认信号 SIGIO
+
+SIGIO 是非实时信号，是不可靠信号，不可对信号进行排队，当进程收到信号时，会屏蔽后续的 SIGIO 信号
+
+设置成实时信号：
+
+````c
+fcntl(fd, F_SETSIG, SIGRTMIN);
+````
+
+#### 13.4.2 使用 sigaction 函数来注册信号处理函数
+
+使用 sigaction 函数来注册，并指定 SA_SIGINFO
+
+siginfo 结构体
+
+* sig_signo 引发处理函数被调用的信号
+* si_fd 表示发生异步 IO 事件的文件描述符
+* si_code 表示文件描述符发生了什么事，如读就绪，写就绪，异常事件等
+* si_band 位掩码，该值与系统调用 poll 中返回的 revents 字段中的值相同
+
+![image-20230602161530083](cApplication.assets/image-20230602161530083.png)
+
+改进后的代码如下：
+
+```c
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <string.h>
+#include <signal.h>
+#include <fcntl.h>
+static int fd;
+
+void handle_func(int sig, siginfo_t *info, void *context)
+{
+    char buf[3] = {0};
+    int ret = 0;
+    if (SIGRTMIN != sig)
+        return;
+    /* 引发函数被调用的信号 */
+    printf("sig is %d \r\n", info->si_signo);
+    /* 判断文件是否可读 */
+    if (POLL_IN == info->si_code)
+    {
+        /* 读文件 */
+        ret = read(fd, buf, sizeof(buf));
+        if (0 > ret)
+        {
+            perror("read error");
+            close(fd);
+            exit(-1);
+        }
+        printf("成功读取<%d>个字节数据\n", ret);
+    }
+}
+
+int main(void)
+{
+    struct sigaction act;
+    int flag;
+    /* 非阻塞式打开文件 */
+    fd = open("/dev/input/mouse0", O_RDONLY | O_NONBLOCK);
+    if (-1 == fd)
+    {
+        perror("open error");
+        exit(-1);
+    }
+    /* 指定标志使能异步 IO */
+    flag = fcntl(fd, F_GETFL);
+    flag |= O_ASYNC;
+    fcntl(fd, F_SETFL, flag);
+    /* 将异步IO设置成实时信号 */
+    fcntl(fd, F_SETSIG, SIGRTMIN);
+    /* 设置接收异步IO信号的进程 */
+    fcntl(fd, F_SETOWN, getpid());
+    /* 用sigaction注册处理函数 */
+    act.sa_sigaction = handle_func;
+    act.sa_flags = SA_SIGINFO;
+    sigemptyset(&act.sa_mask);
+    sigaction(SIGRTMIN, &act, NULL);
+
+    while (1)
+        ;
+    /* 关闭文件 */
+    close(fd);
+    exit(0);
+}
+```
+
+### 13.5 存储映射 I/O
+
+这是一种基于内存区域的高级 IO 操作，将一个文件映射到进程地址空间的一块内存区域中，然后对该内存进行读写就相当于使用基本 IO 函数 read 和 write 对一个文件进行读写
+
+#### 13.5.1 mmap 和 munmap 函数
+
+```c
+#include <sys/mman.h>
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+/*
+addr 指定映射到内存区域的起始地址，通常设置未 NUL 让系统内核选择
+length 指定映射长度，字节为单位，表示将文件中多大的区域映射到内存中
+offset 文件映射的偏移量，设置为0 表示从文件头开始映射
+fd 文件描述符
+prot 指定映射区的保护要求（可指定多个）：
+PROT_EXEC： 映射区可执行
+PROT_READ： 映射区可读
+PROT_WRITE： 映射区可写
+PROT_NONE： 映射区不可访问
+但是不能超过 open 该文件描述符时设置的权限
+返回值，调用成功返回映射区的起始地址，错误返回 -1(MAP_FAILED) 设置 errno 
+*/
+```
+
+flags 必须选择下面两种之中的一个：
+
+![image-20230602170035016](cApplication.assets/image-20230602170035016.png)
+
+存储映射 IO 的区域
+
+![image-20230602170448225](cApplication.assets/image-20230602170448225.png)
+
+**映射区域的 length**
+
+通常 Length 要求是系统页的整数倍，通过 `getconf PAGE_SIZE `可以查看系统的页大小。通常系统的页大小为 4K  ，如果文件的大小小于一个页的话，系统会自动分配一个完整页，并且填充 0 ，但是这些 0 不可访问，否则内核会发送信号 SIGBUS ，终止进程。
+
+获取页大小的函数
+
+```c
+sysconf(_SC_PAGE_SIZE);
+sysconf(_SC_PAGESIZE);
+```
+
+**与映射区相关的两个信号**
+
+![image-20230602171107516](cApplication.assets/image-20230602171107516.png)
+
+**munmap 解除映射**
+
+```c
+#include <sys/mman.h>
+int munmap(void *addr, size_t length);
+/*
+addr 要解除的映射区域的起始地址（地址是系统页的整数倍）
+length 要解除的大小（系统的页整数倍）
+通常将 length 设置为 mmap 函数的 length 将 addr 设置为 mmap 函数的返回值
+*/
+```
+
+#### 13.5.2 mprotect 函数
+
+修改现有映射区的保护要求
+
+```c
+#include <sys/mman.h>
+int mprotect(void *addr, size_t len, int prot);
+/*
+addr 映射区的起始地址
+len 要修改的范围大小
+成功返回 0 失败 返回 -1 设置 errno 指示错误
+*/
+```
+
+#### 13.5.3 msync 函数
+
+调用 read 和 write 系统调用时，从用户空间往内核空间写数据，但是内核空间不会立马将数据刷新到磁盘当中，映射空间也一样，当往目标映射空间写数据时，数据不会立马写入到文件里，因此可以使用 msync 函数来将数据刷写，更新。与 fsync 函数类似，只不过该函数作用在映射区
+
+```c
+#include <sys/mman.h>
+int msync(void *addr, size_t length, int flags);
+/*
+addr 和 length 指定要刷新的数据的起始地址和范围
+调用成功返回 0 失败返回 -1 设置 errno
+*/
+```
+
+flags 的设置
+
+![image-20230602173234256](cApplication.assets/image-20230602173234256.png)
+
+> munmap 函数不会影响被映射的文件，不会将映射区的文件写入到磁盘文件当中
+
+#### 13.5.4 普通 IO 与存储映射 IO 的比较
+
+**普通 IO 方式的缺点**
+
+期间通过种种缓存的转存，效率比较低
+
+**存储映射 IO 的优点**
+
+存储映射 IO 实质是共享，与 IPC 之内存共享很相似。
+
+一般普通文件的复制过程：
+
+![image-20230603110050828](cApplication.assets/image-20230603110050828.png)
+
+使用存储映射的文件复制过程：
+
+![image-20230603110131824](cApplication.assets/image-20230603110131824.png)
+
+减少了数据的复制操作，效率上更高，可以认为映射区就是应用层与内核层之间的共享内存
+
+**存储映射 IO 的不足**
+
+存储映射 IO 并不是完美的，映射的文件只能是固定大小，而且要是系统页的整数倍，对于少量数据，使用普通 IO 更方便
+
+**存储 io 的应用场景**
+
+存储 IO 在视频图像处理方面用的比较多，比如 LCD 编程
+
+### 13.6 文件锁
+
+为了避免多个进程同时操作同一个文件，可以使用文件锁（也能实现单例模式），互斥锁，自旋锁，读写锁的应用主要是线程方面，这与文件锁不同
+
+**文件锁的分类**
+
+文件锁分为建议性锁和强制性锁：
+
+* 建议性锁（对于加锁的文件，只是不能再上锁了，但是依然可以执行 IO 操作，正确做法是如果上锁失败，应该自觉退出）
+
+本质上是一种协议，程序访问文件之前，先对文件上锁，上锁成功之后再访问文件
+
+* 强制性锁
+
+如果进程对文件上了强制性锁，其它的进程在没有获取到文件锁的情况下是无法对文件进行访问的
+
+#### 13.6.1 flock 函数加锁
+
+只能产生建议锁
+
+```c
+#include <sys/file.h>
+int flock(int fd, int operation);
+/*
+fd fd 为文件描述符
+operation 指定操作方式
+成功返回 0 失败返回 -1 设置 errno
+*/
+```
+
+operation 参数的值： 
+
+![image-20230603111446019](cApplication.assets/image-20230603111446019.png)
+
+**关于 flock 的几条规则**
+
+![image-20230603113229126](cApplication.assets/image-20230603113229126.png)
+
+对于复制的文件描述符
+
+```c
+flock(fd, LOCK_EX); //加锁
+new_fd = dup(fd);
+flock(new_fd, LOCK_UN); //解锁
+```
+
+#### 13.6.2 fcntl 函数加锁
+
+```c
+#include <unistd.h>
+#include <fcntl.h>
+int fcntl(int fd, int cmd, ... /* struct flock *flockptr */ );
+```
+
+与锁相关的 cmd 为 F_SETLK、 F_SETLKW、 F_GETLK，参数 flockptr 是一个 struct flock 结构体指针
+
+* flock 仅支持对整个文件进行加解锁，而 fcntl 可以对文件的某个区域进行加解锁
+* flock 仅支持建议性，而 fcntl 可以支持建议性和强制性
+
+struct flock 结构体
+
+```c
+struct flock {
+    ...
+    short l_type; /* Type of lock: F_RDLCK,F_WRLCK, F_UNLCK */
+    short l_whence; /* How to interpret l_start: SEEK_SET, SEEK_CUR, SEEK_END */
+    off_t l_start; /* Starting offset for lock */
+    off_t l_len; /* Number of bytes to lock */
+    pid_t l_pid; /* PID of process blocking our lock(set by F_GETLK and F_OFD_GETLK) */
+	...
+};
+```
+
+![image-20230603113848199](cApplication.assets/image-20230603113848199.png)
+
+还要注意以下几项规则：
+
+![image-20230603114036350](cApplication.assets/image-20230603114036350.png)
+
+**两种类型的锁：F_RDLCK 和 F_WRLCK**
+
+分别表示共享性读锁，和独占性写锁，下表展示了这两种锁的区别，和读写锁很相似
+
+![image-20230603114330751](cApplication.assets/image-20230603114330751.png)
+
+如果某一个进程对文件的某一个区域已经上了一把锁，后来该进程又再加一把锁，那么新锁替换旧锁
+
+**F_SETLK、 F_SETLKW 和 F_GETLK**
+
+![image-20230603114723315](cApplication.assets/image-20230603114723315.png)
+
+使用实例：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+int main(int argc, char *argv[])
+{
+    struct flock lock = {0};
+    int fd = -1;
+    char buf[] = "Hello World!";
+    /* 校验传参 */
+    if (2 != argc)
+    {
+        fprintf(stderr, "usage: %s <file>\n", argv[0]);
+        exit(-1);
+    }
+    /* 打开文件 */
+    fd = open(argv[1], O_WRONLY);
+    if (-1 == fd)
+    {
+        perror("open error");
+        exit(-1);
+    }
+    /* 对文件加锁 */
+    lock.l_type = F_WRLCK;    // 独占性写锁
+    lock.l_whence = SEEK_SET; // 文件头部
+    lock.l_start = 0;         // 偏移量为 0
+    lock.l_len = 0;
+    if (-1 == fcntl(fd, F_SETLK, &lock))
+    {
+        perror("加锁失败");
+        exit(-1);
+    }
+    printf("对文件加锁成功!\n");
+    /* 对文件进行写操作 */
+    if (0 > write(fd, buf, strlen(buf)))
+    {
+        perror("write error");
+        exit(-1);
+    }
+    /* 解锁 */
+    lock.l_type = F_UNLCK; // 解锁
+    fcntl(fd, F_SETLK, &lock);
+    /* 退出 */
+    close(fd);
+    exit(0);
+}
+```
+
+**几条规则（和 flock 相似）**
+
+* 文件关闭的时候，会自动解锁
+* 一个进程不可以对另一个进程持有的文件锁进行解锁
+* 由 fork 创建的子进程不会继承父进程所创建的锁
+* 复制的文件描述符和源文件描述符都会引用同一个文件锁
+
+**建议性锁和强制性锁**
+
+一般不建议使用强制性锁，大部分情况都是使用建议性锁
+
+强制性锁机制还得看系统支不支持，在不支持的情况下，尽管拿不到锁，也是可以正常读取文件的
+
+#### 13.6.3 lockf 函数加锁
+
+库函数，基于 fcntl 实现的
+
+## 14. 本篇总结
+
+![image-20230603121032852](cApplication.assets/image-20230603121032852.png)
+
+## 15. 点亮 LED
+
+### 15.1 应用层操控硬件的两种方式
+
+设备文件是各种硬件设备向应用层提供的接口，应用层通过对设备文件的 IO 操作来控制硬件设备，设备文件通常在 /dev/ 目录下，把该目录下的文件叫做设备节点，除此之外，我们还可以通过 sysfs 文件系统对硬件设备进行操控
+
+#### 15.1.1 sysfs 文件系统
+
+是虚拟文件系统，作用是将内核信息以文件的方式提供给应用层
+
+| 内核中的组成要素             | sysfs 中的表现 |
+| ---------------------------- | -------------- |
+| 内核对象（譬如一个硬件设备） | 目录           |
+| 对象属性（譬如设备属性）     | 文件           |
+| 对象关系                     | 链接文件       |
+
+#### 15.1.2 sysfs 与 /sys
+
+sysfs 挂载在 /sys 目录下
+
+![image-20230603143605947](cApplication.assets/image-20230603143605947.png)
+
+| /sys 下的子目录 | 说明                                                         |
+| :-------------- | :----------------------------------------------------------- |
+| /sys/devices    | 这是系统中所有设备存放的目录， 也就是系统中的所有设 备在 sysfs 中的呈现、表达，也是 sysfs 管理设备的最重要 的目录结构。 |
+| /sys/block      | 块设备的存放目录，这是一个过时的接口，按照 sysfs 的设 计理念，系统所有的设备都存放在/sys/devices 目录下，所以/sys/block 目录下的文件通常是链接到/sys/devices 目录下 的文件。 |
+| /sys/bus        | 这是系统中的所有设备按照总线类型分类放置的目录结 构， /sys/devices 目录下每一种设备都是挂在某种总线下 的，譬如 i2c 设备挂在 I2C 总线下。同样， /sys/bus 目录下 的文件通常也是链接到了/sys/devices 目录。 |
+| /sys/class      | 这是系统中的所有设备按照其功能分类放置的目录结构， 同样该目录下的文件也是链接到了/sys/devices 目录。 按照 设备的功能划分组织在/sys/class 目录下，譬如/sys/class/leds 目录中存放了所有的 LED 设备， /sys/class/input 目录中存放 了所有的输入类设备。 |
+| /sys/dev        | 这是按照设备号的方式放置的目录结构，同样该目录下的 文件也是链接到了/sys/devices 目录。该目录下有很多以主 设备号:次设备号（major:minor）命名的文件，这些文件都 是链接文件，链接到/sys/devices 目录下对应的设备。 |
+| /sys/firmware   | 描述了内核中的固件。                                         |
+| /sys/fs         | 用于描述系统中所有文件系统，包括文件系统本身和按文 件系统分类存放的已挂载点。 |
+| /sys/kernel     | 这里是内核中所有可调参数的位置。                             |
+| /sys/module     | 这里有系统中所有模块的信息。                                 |
+| /sys/power      | 这里是系统中电源选项，有一些属性可以用于控制整个系 统的电源状态。 |
+
+系统中所有的设备都会在 devices 中体现出来，是最重要的目录结构
+
+#### 5.1.3 总结
+
+应用层想要对底层硬件进行操控，通常可以通过以下两种方式
+
+* /dev/目录下的设备文件（设备节点）
+* /sys/目录下设备的属性文件
+
+一般简单的设备会使用属性文件操控，如 LED GPIO 等，较复杂的设备会使用设备节点的放，如 LCD，触摸屏，摄像头等
+
+#### 15.1.4 标准接口与非标准接口
+
+Linux 针对各种常见的设备进行分类，设计了一套成熟的标准的驱动实现框架，叫做设备驱动框架，除此之外，还有很多硬件外设并不属于 Linux 系统设备分类当中，只归为杂项类
+
+### 15.2 LED 硬件控制方式
+
+板子上的 led 是使用 linux 内核标准 LED 驱动框架注册而成，在 /dev 目录下没有对应的设备节点，其实现使用 sysfs 方式
+
+![image-20230603150358910](cApplication.assets/image-20230603150358910.png)
+
+### 15.3 编写 LED 应用程序
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+#define LED_TRIGGER "/sys/class/leds/sys-led/trigger"
+#define LED_BRIGHTNESS "/sys/class/leds/sys-led/brightness"
+
+/* 当使用错误时，打印错误信息 */
+#define USAGE() fprintf(stderr, "usage:\n"                \
+                                " %s <on|off>\n"          \
+                                " %s <trigger> <type>\n", \
+                        argv[0], argv[0])
+
+                        
+int main(int argc, char *argv[])
+{
+    int fd1, fd2;
+    /* 校验传参 */
+    if (2 > argc)
+    {
+        USAGE();
+        exit(-1);
+    }
+    /* 打开 LED 设备文件 */
+    fd1 = open(LED_TRIGGER, O_RDWR);
+    if (0 > fd1)
+    {
+        perror("open error");
+        exit(-1);
+    }
+    fd2 = open(LED_BRIGHTNESS, O_RDWR);
+    if (0 > fd2)
+    {
+        perror("open error");
+        exit(-1);
+    }
+    /* 根据传参控制 LED */
+    if (!strcmp(argv[1], "on"))
+    {
+        write(fd1, "none", 4); // 先将触发模式设置为 none
+        write(fd2, "1", 1);    // 点亮 LED
+    }
+    else if (!strcmp(argv[1], "off"))
+    {
+        write(fd1, "none", 4); // 先将触发模式设置为 none
+        write(fd2, "0", 1);    // LED 灭
+    }
+    else if (!strcmp(argv[1], "trigger"))
+    {
+        if (3 != argc)
+        {
+            USAGE();
+            exit(-1);
+        }
+        if (0 > write(fd1, argv[2], strlen(argv[2])))
+            perror("write error");
+    }
+    else
+        USAGE();
+    exit(0);
+}
+```
+
+使用交叉编译器编译，拷贝到板子的文件系统的家目录上
+
+## 16. GPIO 应用编程
+
+### 16.1 应用层如何操控 GPIO
+
+与 LED 设备一样，GPIO 同样也是通过 sysfs 方式进行操控，进入到 sys/class/gpio 目录下：
+
+![image-20230603162134097](cApplication.assets/image-20230603162134097.png)
+
+可以看到该目录下包含两个文件 export、 unexport 以及 5 个 gpiochipX（X 等于 0、 32、 64、 96、 128）命名的文件夹  
+
+* gpiochipX
+
+当前芯片一共包含了 5 个 GPIO 控制器，分别是 GPIO 1-5 ，分别对应 gpiochip0 , 32, 64, 96, 12 共 5 个文件夹
+
+进入到文件夹：
+
+![image-20230603162436659](cApplication.assets/image-20230603162436659.png)
+
+base：表示该控制器中所管理的这组 GPIO 引脚中最小的编号，每个引脚有一个对应的编号
+
+label：该组 GPIO 对应的标签，也就是名字 `cat label` 查看
+
+ngpio：该控制器所管理的 GPIO 引脚的数量
+
+对于一个给定的 GPIO 引脚，引脚为 GPIO4_IO16 ，那它对应的编号是多少。首先要确定 GPIO4 对应于 gpiochip96 ，所以编号自然是 96+16 = 112 同理，GPIO3_IO20 对应的编号是 64+20 = 84
+
+* export
+
+用于将指定编号的 GPIO 引脚导出，在使用 GPIO 引脚之前，要将其导出，导出之后才能使用，该文件只能写，不能读取
+
+`echo 0 > export #导出编号为0的GPIO引脚，也就是 GPIO1_IO0`
+
+导出成功之后会生成 gpio0 文件
+
+* unexport
+
+将导出的 GPIO 引脚删除，删除之后 gpio0 文件夹就会消失（如果该引脚被内核使用则无法导出）
+
+`echo 0 > unexport`
+
+**gpioX**
+
+打开 export 生成的 gpio0 文件：
+
+![image-20230603165022518](cApplication.assets/image-20230603165022518.png)
+
+主要关心的文件是 active_low、 direction、 edge 以及 value 这四个属性文件
+
+* direction
+
+配置 GPIO 引脚为输入或输出模式，该文件可读可写
+
+```sh
+cat direction # 查看引脚模式
+echo "out" > direction # 设置成输出模式
+```
+
+* value
+
+在 GPIO 配置为输出模式下，向 value 文件写入 "0" 控制 GPIO 引脚输出低电平，写入 "1" 则控制输出高电平
+
+```sh
+# 获取 GPIO 引脚的输入电平状态
+echo "in" > direction
+cat value
+# 控制 GPIO 引脚输出高电平
+echo "out" > direction
+echo "1" > value
+```
+
+* active_low
+
+这个属性文件用于控制极性，可读可写，默认为 0
+
+```c
+# active_low 等于 0 时
+echo "0" > active_low
+echo "out" > direction
+echo "1" > value #输出高
+echo "0" > value #输出低
+# active_low 等于 1 时
+$ echo "1" > active_low
+$ echo "out" > direction
+$ echo "1" > value #输出低
+$ echo "0" > value #输出高
+```
+
+* edge
+
+控制中断的触发模式，可读可写，在配置 GPIO 引脚的中断触发模式之前，需将其设置为输入模式
+
+```sh
+非中断引脚： echo "none" > edge
+上升沿触发： echo "rising" > edge
+下降沿触发： echo "falling" > edge
+边沿触发： echo "both" > edge
+```
+
+### 16.2 GPIO 应用编程之输出
+
+使用 open，write，read 等调用实现修改 gpio 文件属性和 export 导出 gpio 等
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+static char gpio_path[100];
+
+static int gpio_config(const char *attr, const char *val)
+{
+    char file_path[100];
+    int len;
+    int fd;
+    sprintf(file_path, "%s/%s", gpio_path, attr);
+    if (0 > (fd = open(file_path, O_WRONLY)))
+    {
+        perror("open error");
+        return fd;
+    }
+    len = strlen(val);
+    if (len != write(fd, val, len))
+    {
+        perror("write error");
+        close(fd);
+        return -1;
+    }
+    close(fd); // 关闭文件
+    return 0;
+}
+
+int main(int argc, char *argv[])
+{
+    /* 校验传参 */
+    if (3 != argc)
+    {
+        fprintf(stderr, "usage: %s <gpio> <value>\n", argv[0]);
+        exit(-1);
+    }
+    /* 判断指定编号的 GPIO 是否导出 */
+    sprintf(gpio_path, "/sys/class/gpio/gpio%s", argv[1]); // 将地址写入到变量 path
+    if (access(gpio_path, F_OK)) // 查看文件是否存在
+    { // 如果目录不存在 则需要导出
+        int fd;
+        int len;
+        if (0 > (fd = open("/sys/class/gpio/export", O_WRONLY))) // 打开 export
+        {
+            perror("open error");
+            exit(-1);
+        }
+        len = strlen(argv[1]);
+        if (len != write(fd, argv[1], len)) // 写入 echo 编号 > export(也就是写入 编号) 
+        { // 导出 gpio
+            perror("write error");
+            close(fd);
+            exit(-1);
+        }
+        close(fd); // 关闭文件
+    }
+    /* 配置为输出模式 */
+    if (gpio_config("direction", "out"))
+        exit(-1);
+    /* 极性设置 */
+    if (gpio_config("active_low", "0"))
+        exit(-1);
+    /* 控制 GPIO 输出高低电平 */
+    if (gpio_config("value", argv[2]))
+        exit(-1);
+    /* 退出程序 */
+    exit(0);
+}
+```
+
+### 16.3 GPIO 应用编程之输入
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+static char gpio_path[100];
+
+static int gpio_config(const char *attr, const char *val)
+{
+    char file_path[100];
+    int len;
+    int fd;
+    sprintf(file_path, "%s/%s", gpio_path, attr);
+    if (0 > (fd = open(file_path, O_WRONLY)))
+    {
+        perror("open error");
+        return fd;
+    }
+    len = strlen(val);
+    if (len != write(fd, val, len))
+    {
+        perror("write error");
+        close(fd);
+        return -1;
+    }
+    close(fd); // 关闭文件
+    return 0;
+}
+int main(int argc, char *argv[])
+{
+    char file_path[100];
+    char val;
+    int fd;
+    /* 校验传参 */
+    if (2 != argc)
+    {
+        fprintf(stderr, "usage: %s <gpio>\n", argv[0]);
+        exit(-1);
+    }
+    /* 判断指定编号的 GPIO 是否导出 */
+    sprintf(gpio_path, "/sys/class/gpio/gpio%s", argv[1]);
+    if (access(gpio_path, F_OK))
+    { // 如果目录不存在 则需要导出
+        int len;
+        if (0 > (fd = open("/sys/class/gpio/export", O_WRONLY)))
+        {
+            perror("open error");
+            exit(-1);
+        }
+        len = strlen(argv[1]);
+        if (len != write(fd, argv[1], len))
+        { // 导出 gpio
+            perror("write error");
+            close(fd);
+            exit(-1);
+        }
+        close(fd); // 关闭文件
+    }
+    /* 配置为输入模式 */
+    if (gpio_config("direction", "in"))
+        exit(-1);
+    /* 极性设置 */
+    if (gpio_config("active_low", "0"))
+        exit(-1);
+    /* 配置为非中断方式 */
+    if (gpio_config("edge", "none"))
+        exit(-1);
+    /* 读取 GPIO 电平状态 */
+    sprintf(file_path, "%s/%s", gpio_path, "value");
+    if (0 > (fd = open(file_path, O_RDONLY)))
+    {
+        perror("open error");
+        exit(-1);
+    }
+    if (0 > read(fd, &val, 1))
+    {
+        perror("read error");
+        close(fd);
+        exit(-1);
+    }
+    printf("value: %c\n", val);
+    /* 退出程序 */
+    close(fd);
+    exit(0);
+}
+```
+
+```sh
+root@ATK-IMX6U:~# ./app2 1 # 查看gpio1输入引脚的值
+value: 0
+```
+
+### 16.4 GPIO 应用编程之中断
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+#include <poll.h>
+static char gpio_path[100];
+
+static int gpio_config(const char *attr, const char *val)
+{
+    char file_path[100];
+    int len;
+    int fd;
+    sprintf(file_path, "%s/%s", gpio_path, attr);
+    if (0 > (fd = open(file_path, O_WRONLY)))
+    {
+        perror("open error");
+        return fd;
+    }
+    len = strlen(val);
+    if (len != write(fd, val, len))
+    {
+        perror("write error");
+        return -1;
+    }
+    close(fd); // 关闭文件
+    return 0;
+}
+int main(int argc, char *argv[])
+{
+    struct pollfd pfd;
+    char file_path[100];
+    int ret;
+    char val;
+    /* 校验传参 */
+    if (2 != argc)
+    {
+        fprintf(stderr, "usage: %s <gpio>\n", argv[0]);
+        exit(-1);
+    }
+    /* 判断指定编号的 GPIO 是否导出 */
+    sprintf(gpio_path, "/sys/class/gpio/gpio%s", argv[1]);
+    if (access(gpio_path, F_OK))
+    { // 如果目录不存在 则需要导出
+        int len;
+        int fd;
+        if (0 > (fd = open("/sys/class/gpio/export", O_WRONLY)))
+        {
+            perror("open error");
+            exit(-1);
+        }
+        len = strlen(argv[1]);
+        if (len != write(fd, argv[1], len))
+        { // 导出 gpio
+            perror("write error");
+            exit(-1);
+        }
+        close(fd); // 关闭文件
+    }
+    /* 配置为输入模式 */
+    if (gpio_config("direction", "in"))
+        exit(-1);
+    /* 极性设置 */
+    if (gpio_config("active_low", "0"))
+        exit(-1);
+    /* 配置中断触发方式: 上升沿和下降沿 */
+    if (gpio_config("edge", "both"))
+        exit(-1);
+    /* 打开 value 属性文件 */
+    sprintf(file_path, "%s/%s", gpio_path, "value");
+    if (0 > (pfd.fd = open(file_path, O_RDONLY)))
+    {
+        perror("open error");
+        exit(-1);
+    }
+    /* 调用 poll */
+    pfd.events = POLLPRI;  // 只关心高优先级数据可读（中断）
+    read(pfd.fd, &val, 1); // 先读取一次清除状态
+    for (;;)
+    {
+        ret = poll(&pfd, 1, -1); // 调用 poll
+        if (0 > ret)
+        {
+            perror("poll error");
+            exit(-1);
+        }
+        else if (0 == ret)
+        {
+            fprintf(stderr, "poll timeout.\n");
+            continue;
+        }
+        /* 校验高优先级数据是否可读 */
+        if (pfd.revents & POLLPRI)
+        {
+            if (0 > lseek(pfd.fd, 0, SEEK_SET))
+            { // 将读位置移动到头部
+                perror("lseek error");
+                exit(-1);
+            }
+            if (0 > read(pfd.fd, &val, 1))
+            {
+                perror("read error");
+                exit(-1);
+            }
+            printf("GPIO 中断触发<value=%c>\n", val);
+        }
+    }
+    /* 退出程序 */
+    exit(0);
+}
+```
+
+```sh
+./app3 1
+#然后使用杜邦线连接 gpio_01 到电源引脚和地之间来回切换，就会触发中断
+```
+
+![image-20230603174758785](cApplication.assets/image-20230603174758785.png)
+
+### 16.5 在开发板上测试
+
+自行用万用表测引脚
+
+## 17. 输入设备应用编程
+
+### 17.1 输入类设备编程介绍
+
+#### 17.1.1 什么是输入设备
+
+常见的输入设备有鼠标，键盘触摸屏，遥控器，电脑画图板
+
+#### 17.1.2 input 子系统
+
+基于 input 子系统注册成功的输入设备，都会在 /dev/input 目录下生成对应的设备节点（设备文件），设备节点名称通常为 eventX（X 表示一个数字编号 0、 1、 2、 3 等），譬如 /dev/input/event0、 /dev/input/event1、/dev/input/event2 等， 通过读取这些设备节点可以获取输入设备上报的数据
+
+#### 17.1.3 读取数据的流程
+
+比如触摸屏设备对应设备节点为 /dev/input/event0 那么读取流程如下：
+
+* 应用程序打开 /dev/inut/event0 设备文件
+* 应用发起读操作（read），没有数据可读则进入休眠
+* 当有数据可读时，应用程序被唤醒，读操作获取到数据返回
+* 应用程序对读取到的数据进行解析
+
+#### 17.1.4 应用程序如何解析数据
+
+应用程序打开输入设备对应的设备文件，发起读操作，那么读操作获取的都是一个 input_event 结构体类型数据
+
+```c
+struct input_event {
+    struct timeval time; // 发生的时间
+    __u16 type;
+    __u16 code;
+    __s32 value;
+};
+```
+
+* type 表示发生了哪一种类型的事件
+
+```c
+/*
+* Event types
+*/
+#define EV_SYN 0x00 //同步类事件，用于同步事件
+#define EV_KEY 0x01 //按键类事件
+#define EV_REL 0x02 //相对位移类事件(譬如鼠标)
+#define EV_ABS 0x03 //绝对位移类事件(譬如触摸屏)
+#define EV_MSC 0x04 //其它杂类事件
+#define EV_SW 0x05
+#define EV_LED 0x11
+#define EV_SND 0x12
+#define EV_REP 0x14
+#define EV_FF 0x15
+#define EV_PWR 0x16
+#define EV_FF_STATUS 0x17
+#define EV_MAX 0x1f
+#define EV_CNT (EV_MAX+1)
+```
+
+* code 表示该类事件中的哪一个具体事件
+
+```c
+#define KEY_RESERVED 0
+#define KEY_ESC 1 //ESC 键
+#define KEY_1 2 //数字 1 键
+#define KEY_2 3 //数字 2 键
+#define KEY_TAB 15 //TAB 键
+#define KEY_Q 16 //字母 Q 键
+#define KEY_W 17 //字母 W 键
+#define KEY_E 18 //字母 E 键
+#define KEY_R 19 //字母 R 键
+……
+```
+
+**相对位移事件**
+
+```c
+#define REL_X 0x00 //X 轴
+#define REL_Y 0x01 //Y 轴
+#define REL_Z 0x02 //Z 轴
+#define REL_RX 0x03
+#define REL_RY 0x04
+#define REL_RZ 0x05
+#define REL_HWHEEL 0x06
+#define REL_DIAL 0x07
+#define REL_WHEEL 0x08
+#define REL_MISC 0x09
+#define REL_MAX 0x0f
+#define REL_CNT (REL_MAX+1)
+```
+
+**绝对位移事件**
+
+触摸屏设备是一种绝对位移设备，它能够产生绝对位移事件
+
+```c
+#define ABS_X 0x00 //X 轴
+#define ABS_Y 0x01 //Y 轴
+#define ABS_Z 0x02 //Z 轴
+#define ABS_RX 0x03
+#define ABS_RY 0x04
+#define ABS_RZ 0x05
+#define ABS_THROTTLE 0x06
+#define ABS_RUDDER 0x07
+#define ABS_WHEEL 0x08
+#define ABS_GAS 0x09
+#define ABS_BRAKE 0x0a
+#define ABS_HAT0X 0x10
+#define ABS_HAT0Y 0x11
+#define ABS_HAT1X 0x12
+#define ABS_HAT1Y 0x13
+#define ABS_HAT2X 0x14
+#define ABS_HAT2Y 0x15
+#define ABS_HAT3X 0x16
+#define ABS_HAT3Y 0x17
+#define ABS_PRESSURE 0x18
+#define ABS_DISTANCE 0x19
+#define ABS_TILT_X 0x1a
+#define ABS_TILT_Y 0x1b
+#define ABS_TOOL_WIDTH 0x1c
+......
+```
+
+更多事件在 <linux/input.h> 中包含了
+
+* value 比如说 1 表示 按下按键，0 表示松开按键，触摸点 x 坐标 ABS_X 的值等
+
+**数据同步**
+
+上报同步时间事件，value 值通常为 0
+
+```c
+/*
+* Synchronization events.
+*/
+#define SYN_REPORT 0
+#define SYN_CONFIG 1
+#define SYN_MT_REPORT 2
+#define SYN_DROPPED 3
+#define SYN_MAX 0xf
+#define SYN_CNT (SYN_MAX+1)
+```
+
+### 17.2 读取 struct input_event 数据
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <linux/input.h>
+int main(int argc, char *argv[])
+{
+    struct input_event in_ev = {0};
+    int fd = -1;
+    /* 校验传参 */
+    if (2 != argc)
+    {
+        fprintf(stderr, "usage: %s <input-dev>\n", argv[0]);
+        exit(-1);
+    }
+    /* 打开文件 */
+    if (0 > (fd = open(argv[1], O_RDONLY)))
+    {
+        perror("open error");
+        exit(-1);
+    }
+    for (;;)
+    {
+        /* 循环读取数据 */
+        if (sizeof(struct input_event) !=
+            read(fd, &in_ev, sizeof(struct input_event)))
+        {
+            perror("read error");
+            exit(-1);
+        }
+        printf("type:%d code:%d value:%d\n",
+               in_ev.type, in_ev.code, in_ev.value);
+    }
+}
+```
+
+### 17.3 在开发板上验证
+
+板子上的按键是基于 input 系统实现的，所以在 /dev/input 下存在 key0 的设备节点，具体是哪个节点可以通过 `/proc/bus/input/devices `得知，程序打开该文件，然后读取文件信息到结构体 input_event 里，并打印，得到结果
+
+![image-20230603210637735](cApplication.assets/image-20230603210637735.png)
+
+type 1 表示是按键类型的事件，code 对应是什么按键，value 表示按下或者释放
+
+type0 表示同步类事件
+
+### 17.4 按键应用编程
+
+就是解析上面代码中 input_event 结构体里的数据
+
+```c
+/* 判断事件 */
+if (in_ev.type == EV_KEY)
+{
+    switch (in_ev.value)
+    {
+    case 0:
+        printf("code<%d>: 松开\n\r", in_ev.code);
+        break;
+    case 1:
+        printf("code<%d>: 按下\n\r", in_ev.code);
+        break;
+    case 2:
+        printf("code<%d>: 长按\n\r", in_ev.code);
+        break;
+    }
+}
+```
+
+#### 17.5 触摸屏应用编程
+
+#### 17.5.1 解析触摸屏设备上报的数据
+
+触摸屏设备是一个绝对位移设备，可以上报绝对位移事件
+
+```c
+#define ABS_X 0x00 //X 轴坐标
+#define ABS_Y 0x01 //Y 轴坐标
+#define ABS_Z 0x02 //Z 轴坐标
+#define ABS_RX 0x03
+#define ABS_RY 0x04
+#define ABS_RZ 0x05
+#define ABS_THROTTLE 0x06
+#define ABS_RUDDER 0x07
+#define ABS_WHEEL 0x08
+#define ABS_GAS 0x09
+#define ABS_BRAKE 0x0a
+#define ABS_HAT0X 0x10
+#define ABS_HAT0Y 0x11
+#define ABS_HAT1X 0x12
+#define ABS_HAT1Y 0x13
+#define ABS_HAT2X 0x14
+#define ABS_HAT2Y 0x15
+#define ABS_HAT3X 0x16
+#define ABS_HAT3Y 0x17
+#define ABS_PRESSURE 0x18 //按压力
+#define ABS_DISTANCE 0x19
+#define ABS_TILT_X 0x1a
+#define ABS_TILT_Y 0x1b
+#define ABS_TOOL_WIDTH 0x1c
+#define ABS_VOLUME 0x20
+#define ABS_MISC 0x28
+#define ABS_MT_SLOT 0x2f /* MT slot being modified */
+#define ABS_MT_TOUCH_MAJOR 0x30 /* Major axis of touching ellipse */
+#define ABS_MT_TOUCH_MINOR 0x31 /* Minor axis (omit if circular) */
+#define ABS_MT_WIDTH_MAJOR 0x32 /* Major axis of approaching ellipse */
+#define ABS_MT_WIDTH_MINOR 0x33 /* Minor axis (omit if circular) */
+#define ABS_MT_ORIENTATION 0x34 /* Ellipse orientation */
+#define ABS_MT_POSITION_X 0x35 /* Center X touch position */ //X 轴坐标
+#define ABS_MT_POSITION_Y 0x36 /* Center Y touch position */ //Y 轴坐标
+#define ABS_MT_TOOL_TYPE 0x37 /* Type of touching device */
+#define ABS_MT_BLOB_ID 0x38 /* Group a set of packets as a blob */
+#define ABS_MT_TRACKING_ID 0x39 /* Unique ID of initiated contact */ ID
+#define ABS_MT_PRESSURE 0x3a/* Pressure on contact area */ //按压力
+#define ABS_MT_DISTANCE 0x3b /* Contact hover distance */
+#define ABS_MT_TOOL_X 0x3c/* Center X tool position */
+#define ABS_MT_TOOL_Y 0x3d /* Center Y tool position */
+#define ABS_MAX 0x3f
+#define ABS_CNT (ABS_MAX+1)
+```
+
+**单点触摸与多点触摸**
+
+单点触摸设备以 ABS_XXX 事件承载，上报触摸点信息，多点触摸设备可支持多点触摸，一轮完整的数据可能包含多个触摸点信息，如 ABS_MT_POSITION_X
+
+**单点触摸设备-事件上报顺序**
+
+```sh
+# 点击触摸屏时
+BTN_TOUCH
+ABS_X
+ABS_Y
+SYN_REPORT
+# 滑动
+ABS_X
+ABS_Y
+SYN_REPORT
+# 松开
+BTN_TOUCH
+SYN_REPORT
+```
+
+**多点触摸设备-事件上报顺序**
+
+在 Linux 内核中，多点触摸设备使用多点触摸（MT）协议上报各个触摸点的数据，Type A 协议使用比较少
+**MT 协议之 Type B 协议**
+
+该协议适用于能够追踪并且区分触摸点的设备，该协议重点是通过 ABS_MT_SLOT 事件上报各个触摸点信息的更新
+
+```sh
+ABS_MT_SLOT 0
+ABS_MT_TRACKING_ID 10
+ABS_MT_POSITION_X
+ABS_MT_POSITION_Y
+ABS_MT_SLOT 1
+ABS_MT_TRACKING_ID 11
+ABS_MT_POSITION_X
+ABS_MT_POSITION_Y
+SYN_REPORT
+```
+
+#### 17.5.2 获取触摸屏的信息
+
+比如触摸屏支持的最大触摸点数，触摸屏 X、Y 坐标的范围，通过 ioctl 函数可以获取这些信息
+
+```c
+#include <sys/ioctl.h>
+int ioctl(int fd, unsigned long request, ...);
+/*
+该函数是一个可变参数
+*/
+```
+
+使用方法：
+
+```c
+#define EVIOCGVERSION _IOR('E', 0x01, int) /* get driver version */
+#define EVIOCGID _IOR('E', 0x02, struct input_id) /* get device ID */
+#define EVIOCGREP _IOR('E', 0x03, unsigned int[2]) /* get repeat settings */
+#define EVIOCSREP _IOW('E', 0x03, unsigned int[2]) /* set repeat settings */
+#define EVIOCGKEYCODE _IOR('E', 0x04, unsigned int[2]) /* get keycode */
+#define EVIOCGKEYCODE_V2 _IOR('E', 0x04, struct input_keymap_entry)
+#define EVIOCSKEYCODE _IOW('E', 0x04, unsigned int[2]) /* set keycode */
+#define EVIOCSKEYCODE_V2 _IOW('E', 0x04, struct input_keymap_entry)
+#define EVIOCGNAME(len) _IOC(_IOC_READ, 'E', 0x06, len) /* get device name */
+#define EVIOCGPHYS(len) _IOC(_IOC_READ, 'E', 0x07, len) /* get physical location */
+#define EVIOCGUNIQ(len) _IOC(_IOC_READ, 'E', 0x08, len) /* get unique identifier */
+#define EVIOCGPROP(len) _IOC(_IOC_READ, 'E', 0x09, len) /* get device properties */
+
+#define EVIOCGMTSLOTS(len) _IOC(_IOC_READ, 'E', 0x0a, len)
+#define EVIOCGKEY(len) _IOC(_IOC_READ, 'E', 0x18, len) /* get global key state */
+#define EVIOCGLED(len) _IOC(_IOC_READ, 'E', 0x19, len) /* get all LEDs */
+#define EVIOCGSND(len) _IOC(_IOC_READ, 'E', 0x1a, len) /* get all sounds status */
+#define EVIOCGSW(len) _IOC(_IOC_READ, 'E', 0x1b, len) /* get all switch states */
+#define EVIOCGBIT(ev,len) _IOC(_IOC_READ, 'E', 0x20 + (ev), len) /* get event bits */
+#define EVIOCGABS(abs) _IOR('E', 0x40 + (abs), struct input_absinfo) /* get abs value/limits */
+#define EVIOCSABS(abs) _IOW('E', 0xc0 + (abs), struct input_absinfo) /* set abs value/limits */
+#define EVIOCSFF _IOW('E', 0x80, struct ff_effect) /* send a force effect to a force feedback device */
+#define EVIOCRMFF _IOW('E', 0x81, int) /* Erase a force effect */
+#define EVIOCGEFFECTS _IOR('E', 0x84, int) /* Report number of effects playable at the same time */
+#define EVIOCGRAB _IOW('E', 0x90, int) /* Grab/Release device */
+#define EVIOCREVOKE _IOW('E', 0x91, int) /* Revoke device access */
+```
+
+```c
+char name[100];
+ioctl(fd,EVIOCGNAME(sizeof(name)),name);
+/*
+带参宏里如果是 len 就填缓冲区长度吧
+带参宏里是 get 表示获取信息
+带参宏里是 set 表示设置
+*/
+```
+
+```c
+#define EVIOCGABS(abs) IOR('E', 0x40 + (abs), struct input_absinfo)
+/*
+带参宏里是abs 表示为一个 ABS_XXX 绝对位移事件
+这个宏可以获取触摸屏 slot (slot<0>表示触摸点0)
+ EVIOCGABS(ABS_MT_SLOT)，第三个参数指向一个 input_absinfo，获取到的信息放到这个结构体里
+*/
+```
+
+```c
+struct input_absinfo {
+    __s32 value; //最新的报告值
+    __s32 minimum; //最小值
+    __s32 maximum; //最大值
+    __s32 fuzz;
+    __s32 flat;
+    __s32 resolution;
+};
+```
+
+获取触摸屏支持的最大触摸点数
+
+```c
+struct input_absinfo info;
+int max_slots;
+if(0>ioctl(fd,EVIOCGABS(ABS_MT_SLOT),&info))
+    perror("ioctl erro");
+max_slots = info.maximum + 1 -info.minimum;
+// 最大值为 4 ，最小值为 0
+```
+
+**获取触摸屏支持的最大触摸点数**
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <linux/input.h>
+
+int main(int argc, char *argv[])
+{
+    struct input_absinfo info;
+    int fd = -1;
+    int max_slots;
+
+    /* 校验传参 */
+    if (2 != argc)
+    {
+        fprintf(stderr, "usage: %s <input-dev>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    /* 打开文件 */
+    if (0 > (fd = open(argv[1], O_RDONLY)))
+    {
+        perror("open error");
+        exit(EXIT_FAILURE);
+    }
+    /* 获取 slot 信息 */
+    if (0 > ioctl(fd, EVIOCGABS(ABS_MT_SLOT), &info))
+    {
+        perror("ioctl error");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+    max_slots = info.maximum + 1 - info.minimum;
+    printf("max_slots: %d\n", max_slots);
+    /* 关闭、退出 */
+    close(fd);
+    exit(EXIT_SUCCESS);
+
+}
+```
+
+#### 17.5.3 单点触摸应用程序
 
