@@ -7283,3 +7283,754 @@ int main(int argc, char *argv[])
 
 #### 17.5.3 单点触摸应用程序
 
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <linux/input.h>
+int main(int argc, char *argv[])
+{
+    struct input_event in_ev;
+    int x, y;  // 触摸点 x 和 y 坐标
+    int down;  // 用于记录 BTN_TOUCH 事件的 value,1 表示按下,0 表示松开,-1 表示移动
+    int valid; // 用于记录数据是否有效(我们关注的信息发生更新表示有效,1 表示有效,0 表示无效)
+    int fd = -1;
+    /* 校验传参 */
+    if (2 != argc)
+    {
+        fprintf(stderr, "usage: %s <input-dev>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    /* 打开文件 */
+    if (0 > (fd = open(argv[1], O_RDONLY)))
+    {
+        perror("open error");
+        exit(EXIT_FAILURE);
+    }
+    x = y = 0; // 初始化 x 和 y 坐标值
+    down = -1; // 初始化<移动>
+    valid = 0; // 初始化<无效>
+    for (;;)
+    {
+        /* 循环读取数据 */
+        if (sizeof(struct input_event) !=
+            read(fd, &in_ev, sizeof(struct input_event)))
+        {
+            perror("read error");
+            exit(EXIT_FAILURE);
+        }
+        switch (in_ev.type)
+        {
+        case EV_KEY: // 按键事件
+            if (BTN_TOUCH == in_ev.code)
+            {
+                down = in_ev.value;
+                valid = 1;
+            }
+            break;
+        case EV_ABS: // 绝对位移事件
+            switch (in_ev.code)
+            {
+            case ABS_X: // X 坐标
+                x = in_ev.value;
+                valid = 1;
+                break;
+            case ABS_Y: // Y 坐标
+                y = in_ev.value;
+                valid = 1;
+                break;
+            }
+            break;
+        case EV_SYN: // 同步事件
+            if (SYN_REPORT == in_ev.code)
+            {
+                if (valid)
+                { // 判断是否有效
+                    switch (down)
+                    { // 判断状态
+                    case 1:
+                        printf("按下(%d, %d)\n", x, y);
+                        break;
+                    case 0:
+                        printf("松开\n");
+                        break;
+                    case -1:
+                        printf("移动(%d, %d)\n", x, y);
+                        break;
+                    }
+                    valid = 0; // 重置 valid
+                    down = -1; // 重置 down
+                }
+            }
+            break;
+        }
+    }
+}
+```
+
+主要是三类事件： EV_KEY、EV_ABS、EV_SYN
+
+#### 17.5.4 多点触摸屏应用程序
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <string.h>
+#include <linux/input.h>
+
+/* 多点触摸屏程序 */
+
+/* 用于描述 MT 多点触摸每一个触摸点的信息 */
+struct ts_mt
+{
+    int x;     // X 坐标
+    int y;     // Y 坐标
+    int id;    // 对应 ABS_MT_TRACKING_ID
+    int valid; // 数据有效标志位(=1 表示触摸点信息发生更新)
+};
+
+/* 一个触摸点的 x 坐标和 y 坐标 */
+struct tp_xy
+{
+    int x;
+    int y;
+};
+
+static int ts_read(const int fd, const int max_slots,
+                   struct ts_mt *mt)
+{
+    struct input_event in_ev;
+    static int slot = 0;              // 用于保存上一个 slot
+    static struct tp_xy xy[12] = {0}; // 用于保存上一次的 x 和 y 坐标值,假设触摸屏支持的最大触摸点数不会超过 12 ;
+    /* 对缓冲区初始化操作 */
+    int i;
+    memset(mt, 0x0, max_slots * sizeof(struct ts_mt)); // 清零
+    for (i = 0; i < max_slots; i++)
+        mt[i].id = -2; // 将 id 初始化为-2, id=-1 表示触摸点删除, id>=0 表示创建
+    for (;;)
+    {
+        if (sizeof(struct input_event) !=
+            read(fd, &in_ev, sizeof(struct input_event)))
+        {
+            perror("read error");
+            return -1;
+        }
+        switch (in_ev.type)
+        {
+        case EV_ABS:
+            switch (in_ev.code)
+            {
+            case ABS_MT_SLOT:
+                slot = in_ev.value;
+                break;
+            case ABS_MT_POSITION_X:
+                xy[slot].x = in_ev.value;
+                mt[slot].valid = 1;
+                break;
+            case ABS_MT_POSITION_Y:
+                xy[slot].y = in_ev.value;
+                mt[slot].valid = 1;
+                break;
+            case ABS_MT_TRACKING_ID:
+                mt[slot].id = in_ev.value;
+                mt[slot].valid = 1;
+                break;
+            }
+            break;
+        // case EV_KEY://按键事件对单点触摸应用比较有用
+        //  break;
+        case EV_SYN:
+            if (SYN_REPORT == in_ev.code)
+            {
+                for (i = 0; i < max_slots; i++)
+                {
+                    mt[i].x = xy[i].x;
+                    mt[i].y = xy[i].y;
+                }
+            }
+            return 0;
+        }
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    struct input_absinfo slot;
+    struct ts_mt *mt = NULL;
+    int max_slots;
+    int fd;
+    int i;
+    /* 参数校验 */
+    if (2 != argc)
+    {
+        fprintf(stderr, "usage: %s <input_dev>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    /* 打开文件 */
+    fd = open(argv[1], O_RDONLY);
+    if (0 > fd)
+    {
+        perror("open error");
+        exit(EXIT_FAILURE);
+    }
+    /* 获取触摸屏支持的最大触摸点数 */
+    if (0 > ioctl(fd, EVIOCGABS(ABS_MT_SLOT), &slot))
+    {
+        perror("ioctl error");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+    max_slots = slot.maximum + 1 - slot.minimum;
+    printf("max_slots: %d\n", max_slots);
+    /* 申请内存空间并清零 */
+    mt = calloc(max_slots, sizeof(struct ts_mt));
+    /* 读数据 */
+    for (;;)
+    {
+        if (0 > ts_read(fd, max_slots, mt))
+            break;
+        for (i = 0; i < max_slots; i++)
+        {
+            if (mt[i].valid)
+            { // 判断每一个触摸点信息是否发生更新（关注的信息发生更新）
+                if (0 <= mt[i].id)
+                    printf("slot<%d>, 按下(%d, %d)\n", i, mt[i].x, mt[i].y);
+                else if (-1 == mt[i].id)
+                    printf("slot<%d>, 松开\n", i);
+                else
+                    printf("slot<%d>, 移动(%d, %d)\n", i, mt[i].x, mt[i].y);
+            }
+        }
+    }
+    /* 关闭设备、退出 */
+    close(fd);
+    free(mt);
+    exit(EXIT_FAILURE);
+}
+```
+
+主要是两类事件：EV_ABS、EV_SYN，每个触点对应一个槽
+
+### 17.6 鼠标应用编程
+
+这是作业....
+
+* 先找到鼠标对应的设备文件 event3
+
+```sh
+cat /proc/bus/devices
+```
+
+* 编写程序打印 input_event 结构体
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <linux/input.h>
+int main(int argc, char *argv[])
+{
+    struct input_event in_ev; // 获取input 结构体
+    int x, y;  // 触摸点 x 和 y 坐标
+    int fd = -1;
+    /* 校验传参 */
+    if (2 != argc)
+    {
+        fprintf(stderr, "usage: %s <input-dev>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    /* 打开文件 */
+    if (0 > (fd = open(argv[1], O_RDONLY)))
+    {
+        perror("open error");
+        exit(EXIT_FAILURE);
+    }
+
+    for (;;)
+    {
+        /* 循环读取数据 */
+        if (sizeof(struct input_event) !=
+            read(fd, &in_ev, sizeof(struct input_event)))
+        {
+            perror("read error");
+            exit(EXIT_FAILURE);
+        }
+        /* 打印 input_event 信息 */
+        printf("type %d, code %d, value %d\r\n",in_ev.type, in_ev.code, in_ev.value);
+
+    }
+}
+```
+
+输出如下：
+
+![image-20230605104636675](cApplication.assets/image-20230605104636675.png)
+
+编写程序解析如下
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <linux/input.h>
+int main(int argc, char *argv[])
+{
+    struct input_event in_ev; // 获取input 结构体
+    int x, y;                 // 触摸点 x 和 y 坐标
+    int fd = -1;
+    /* 校验传参 */
+    if (2 != argc)
+    {
+        fprintf(stderr, "usage: %s <input-dev>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    /* 打开文件 */
+    if (0 > (fd = open(argv[1], O_RDONLY)))
+    {
+        perror("open error");
+        exit(EXIT_FAILURE);
+    }
+
+    for (;;)
+    {
+        /* 循环读取数据 */
+        if (-1 ==
+            read(fd, &in_ev, sizeof(struct input_event)))
+        {
+            perror("read error");
+            exit(EXIT_FAILURE);
+        }
+        /* 打印 input_event 信息 */
+        //printf("type %d, code %d, value %d\r\n", in_ev.type, in_ev.code, in_ev.value);
+        switch (in_ev.type)
+        {
+            /* 鼠标同步事件 */
+        case EV_SYN:
+            break;
+            /* 鼠标按键事件 */
+        case EV_KEY:
+            switch (in_ev.code)
+            {
+            case BTN_LEFT:
+                if (in_ev.value == 0)
+                    printf("鼠标释放了左键\r\n");
+                if (in_ev.value == 1)
+                    printf("鼠标按下了左键\r\n");
+                break;
+            case BTN_RIGHT:
+                if (in_ev.value == 0)
+                    printf("鼠标释放了右键\r\n");
+                if (in_ev.value == 1)
+                    printf("鼠标按下了右键键\r\n");
+                break;
+            }
+            break;
+            /* 鼠标移动相对位置事件 */ 
+        case EV_REL:
+            switch (in_ev.code)
+            {
+            case REL_X: 
+                if (in_ev.value > 0)
+                    printf("鼠标右移动了<%d>\r\n", abs(in_ev.value));
+                else if (in_ev.value < 0)
+                    printf("鼠标左移动了<%d>\r\n", abs(in_ev.value));
+                else
+                    printf("鼠标没有移动\r\n");
+                break;
+            case REL_Y:
+                if (in_ev.value > 0)
+                    printf("鼠标下移动了<%d>\r\n", abs(in_ev.value));
+                else if (in_ev.value < 0)
+                    printf("鼠标上移动了<%d>\r\n", abs(in_ev.value));
+                else
+                    printf("鼠标没有移动\r\n");
+                break;
+            }
+            break;
+            /* 当不能匹配现有的类型时，使用该类型进行描述 */
+        case EV_MSC:
+            break;
+        }
+    }
+}
+```
+
+使用的是相对事件
+
+## 18. 使用 tslib 库
+
+该库是专门为触摸屏开发的**应用层**函数库
+
+### 18.1 tslib 简介
+
+tslib 为触摸屏驱动和应用层之间的适配层，把应用程序中读取触摸屏 struct input_event 类型数据，并进行解析之后封装，向使用者提供了封装好的API 接口
+
+> tslib 有有个配置文件 ts.conf 文件中提供了一些配置参数，用户可以对其进行修改
+
+tslib 可以作为 Qt 的触摸屏输入插件，为 Qt 提供触摸输入支持
+
+### 18.2 tslib 移植
+
+#### 18.2.1 下载 tslib 源码
+
+首先下载 tslib 源码包，进入到 tslib 的 git 仓库下载源码 https://github.com/libts/tslib/releases
+
+当然开发板的出厂系统已经移植了 tslib 版本为 1.16
+
+`ts_finddev` 查看版本信息
+
+#### 18.2.2 编译 tslib 源码
+
+将 tslib-1.16.tar.gz 源码包拷贝到 Ubuntu 系统的用户家目录下：  解压，创建一个文件夹 tools/tslib ，编译 tslib 库的时候将安装目录指定到这里
+开始编译：
+
+* 配置工程
+
+`/configure --host=arm-poky-linux-gnueabi --prefix=/home/dt/tools/tslib/  `
+
+* 编译工程
+
+注意，在 make 之前要设置默认的编译器为交叉编译器，否则就将库编译为 x86 64 位的文件了，该库无法在用交叉编译器的时候进行链接
+
+`export CC=/usr/local/arm/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-gcc`
+
+`export CXX=/usr/local/arm/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-g++`
+
+设置好环境变量后再执行
+
+`make`
+
+* 安装，将编译得到的库文件，可执行文件等安装到指定的目录下
+
+`make install`
+
+安装完成后进入安装目录查看：
+
+![image-20230605203110516](cApplication.assets/image-20230605203110516.png)
+
+**bin 目录**
+
+bin 目录下有一些 tslib 提供的小工具，用于测试触摸屏
+
+**etc 目录**
+
+etc目录下有一个配置文件 ts.conf
+
+**include 目录**
+
+只有一个头文件 tslib.h 头文件中包含了一些结构体数据结构以及 API 接口的声明，要使用 tslib 提供的 API 就需要包含该头文件
+
+**lib 目录**
+
+lib 目录下包含了编译 tslib 源码所得到的库文件，默认这些都是动态库文件，当然也可以通过配置 tslib 工程使其生成静态库文件，ts 目录下存放的是一些插件库
+
+**share 目录**
+
+这个目录可以忽略
+
+#### 18.2.4 在开发板上测试 tslib
+
+将安装目录 bin/目录下的所有可执行文件拷贝到开发板 /usr/bin 目录下
+将安装目录 etc/目录下的配置文件 ts.conf 拷贝到开发板 /etc 目录下
+将安装目录 lib/目录下的所有库文件拷贝到开发板 /usr/lib 目录下 
+
+配置环境变量
+
+```sh
+export TSLIB_CONSOLEDEVICE=none # 用于配置控制台设备文件名，直接配置为 none 
+export TSLIB_FBDEVICE=/dev/fb0 # 用于配置显示设备的名称， tslib 提供了手指触摸画线的测试工具，需要在 LCD 上显示，所以这里需要指定一个显示设备的设备节点
+export TSLIB_TSDEVICE=/dev/input/event1 # 用于配置触摸屏对应的设备节点，根据实际情况配置
+export TSLIB_CONFFILE=/etc/ts.conf # 用于配置 ts.conf 文件的所在路径
+export TSLIB_PLUGINDIR=/usr/lib/ts # 用于配置插件所在路径
+```
+
+**执行 ts_print 命令**
+
+这个是单点触屏的命令，执行之后，触摸屏幕会打印如下信息：
+
+```c
+1626860260.980594:    490    367    255
+1626860260.990308:    489    368    255
+1626860260.999951:    488    368    255
+1626860261.315204:    488    368    255
+1626860261.333183:    488    369      0
+1626860262.774998:    449    368    255
+1626860262.918153:    448    367    255
+1626860262.927503:    446    366    255
+1626860262.937107:    445    366    255
+1626860262.946649:    442    365    255
+1626860262.956305:    440    364    255
+1626860262.965732:    438    364    255
+1626860262.975286:    436    363    255
+```
+
+它会打印屏幕触点的坐标，ts_print_mt 支持多点触摸，ts_test 支持触摸屏划线操作
+
+## 18.3 tslib 库函数介绍
+
+使用 tslib 提供的 API 接口来编写触摸屏应用程序步骤
+
+* 打开触摸屏设备
+* 配置触摸屏设备
+* 读取触摸屏设备
+
+#### 18.3.1 打开触摸屏设备
+
+使用 tslib 提供的库函数 ts_open 打开触摸屏设备
+
+```c
+#include "tslib.h"
+struct tsdev *ts_open(const char *dev_name, int nonblock);
+/*
+dev_name 指定触摸屏的设备节点
+nonblock 0表示使用阻塞方式打开，非0表示非阻塞方式打开
+调用成功返回 struct tsdev* 指针，指向设备句柄（类似 FILE*）调用失败返回 NULL
+*/
+```
+
+或者使用 ts_setup 函数打开设备
+
+```c
+#include "tslib.h"
+struct tsdev *ts_setup(const char *dev_name, int nonblock)
+/*
+与 ts_open 的区别就是，设置为 NULL 时将从环境变量中获取设别节点，该函数除了打开设备外，还对触摸屏设备进行了配置
+*/
+```
+
+关闭触摸屏设备使用 ts_close 函数
+
+```c
+int ts_close(struct tsdev*);
+```
+
+#### 18.3.2 配置触摸屏设备
+
+```c
+#include "tslib.h"
+int ts_config(struct tsdev *ts);
+/*
+ts 指向触摸屏句柄
+调用成功返回0，失败返回-1
+该函数的本质就是解析 ts.conf 文件中的配置信息，加载相应的插件
+*/
+```
+
+#### 18.3.3 读取触摸屏数据
+
+一个是读取单点触摸数据，一个是用于读取多点触摸数据
+
+```c
+#include "tslib.h"
+int ts_read(struct tsdev *ts, struct ts_sample *samp, int nr);
+int ts_read_mt(struct tsdev *ts, struct ts_sample_mt **samp, int max_slots, int nr);
+/*
+ts 指向一个触摸屏设备句柄，nr 表示对一个触摸点的采样数，设置为1
+max_slots 触摸屏支持的最大触摸点数
+samp 指向一个 ts_sample 对象，该数据结构描述了触摸点的信息，或者 ts_sample_mt 对象数组（二维指针）
+*/
+```
+
+ts_sample 结构体
+
+```c
+struct ts_sample{
+    int x; // x 坐标
+    int y; // y 坐标
+    unsigned int pressure; // 按压力大小
+    struct timeval tv; // 时间
+};
+```
+
+ts_sample_mt 结构体
+
+```c
+struct ts_sample_mt{
+    int x;
+    int y; 
+    unsigned int pressure; // 按压力大小
+    int slot; // 触摸点 slot
+    int tracking_id; // ID
+    
+    int tool_type;
+    int tool_x;
+    int tool_y;
+    unsigned int touch_major;
+    unsigned int width_major;
+    unsigned int touch_minor;
+    unsigned int width_minor;
+    int orientation;
+    int distance;
+    int blob_id;
+    struct timeval tv; // 时间
+    
+    short pen_down; // BTN_TOUCH 的状态
+    short valid; // 此次样本是否有效标志，触摸点数据是否发生更新
+};
+```
+
+### 18.4 基于 tslib 编写触摸屏应用程序
+
+#### 18.4.1 单点触摸应用程序
+
+```c
+#include "/usr/local/include/tslib.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(int argc, char *argv[])
+{
+    struct tsdev *ts = NULL; // 设备文件句柄
+    struct ts_sample sample; // 存放触摸点数据
+    int pressure = 0;        // 保存上一次的按压力
+
+    /* 打开设备文件，非阻塞方式 */
+    ts = ts_setup("/dev/input/event1", 0);
+    if (NULL == ts)
+    {
+        fprintf(stderr, "ts_setup error");
+        exit(EXIT_FAILURE);
+    }
+    /* 读取数据 */
+    for (;;)
+    {
+        if (0 > ts_read(ts, &sample, 1))
+        {
+            fprintf(stderr, "ts_read error");
+            ts_close(ts); // 关闭文件
+            exit(EXIT_FAILURE);
+        }
+
+        if (sample.pressure) // 如果本次按压力大于0
+        {
+            if (pressure) // 上一次按压力大于0，表示这次是移动
+            {
+                printf("移动(%d,%d)\r\n", sample.x, sample.y);
+            }
+            else // 上一次按压力为0，表示这次是按压
+            {
+                printf("按压(%d,%d)\r\n", sample.x, sample.y);
+            }
+        }
+        else // 如果本次压力为0
+        {
+            if (pressure)
+            {
+                printf("释放(%d,%d)\r\n", sample.x, sample.y);
+            }
+            else
+            {
+            }
+        }
+        pressure = sample.pressure;
+    }
+    ts_close(ts);
+    exit(EXIT_SUCCESS);
+}
+```
+
+#### 18.4.2 多点触摸应用程序
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <linux/input.h>
+#include "tslib.h"
+
+#define DEV_NAME "/dev/input/event1"
+
+int main(int argc, char *argv[])
+{
+    struct tsdev *ts = NULL;     // 设备句柄
+    struct ts_sample_mt *mt_ptr; // 存放触摸点数据的结构体数组指针
+    struct input_absinfo slot;
+    int max_slots; // 最大支持的触摸点数
+    unsigned int pressure[max_slots];
+    int i;
+
+    /* 打开并配置触摸屏设备 */
+    ts = ts_setup(DEV_NAME, 0);
+    if (NULL == ts)
+    {
+        fprintf(stderr, "ts_setup error");
+        exit(EXIT_FAILURE);
+    }
+    /* 获取屏幕的最大触点数 */
+    if (0 > ioctl(ts_fd(ts), EVIOCGABS(ABS_MT_SLOT), &slot))
+    {
+        fprintf(stderr, "get slot error");
+        ts_close(ts);
+        exit(EXIT_FAILURE);
+    }
+    max_slots = slot.maximum - slot.minimum + 1;
+    printf("max_slots: %d", max_slots);
+    /* 分配内存 */
+    mt_ptr = calloc(max_slots, sizeof(struct ts_sample_mt));
+
+    /* 读取数据 */
+    for (;;)
+    {
+        if (0 > ts_read_mt(ts, &mt_ptr, max_slots, 1))
+        {
+            fprintf(stderr, "ts_read error");
+            ts_close(ts);
+            exit(EXIT_FAILURE);
+        }
+        for (i = 0; i < max_slots; i++)
+        {
+            // 如果该触摸点有效更新
+            if (mt_ptr[i].valid)
+            {
+                if (pressure[i]) // 上一次压力大于0
+                {
+                    if (mt_ptr[i].pressure) // 本次压力大于0
+                    {
+                        printf("<%d>移动(%d,%d)\r\n", mt_ptr[i].slot, mt_ptr[i].x, mt_ptr[i].y);
+                    }
+                    else
+                    {
+                        printf("<%d>释放(%d,%d)\r\n", mt_ptr[i].slot, mt_ptr[i].x, mt_ptr[i].y);
+                    }
+                }
+                else // 上一次压力为0
+                {
+                    if (mt_ptr[i].pressure) // 本次压力大于0
+                    {
+                        printf("<%d>按压(%d,%d)\r\n", mt_ptr[i].slot, mt_ptr[i].x, mt_ptr[i].y);
+                    }
+                    else
+                    {
+                    }
+                }
+            }
+            pressure[i] = mt_ptr[i].pressure;
+        }
+    }
+    ts_close(ts);
+    exit(EXIT_SUCCESS);
+}
+```
+
+编译的时候记得指定头文件和库文件
+
+## 19. FrameBuffer 应用编程
+
+
+
+
+
