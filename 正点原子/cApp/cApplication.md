@@ -8030,7 +8030,1361 @@ int main(int argc, char *argv[])
 
 ## 19. FrameBuffer 应用编程
 
+### 19.1 什么是 FrameBuffer
 
+Frame 是帧的意思， buffer 是缓冲的意思，也就是帧缓存，也就是说这是一块内存，里面保存着一帧图像，在 Linux 系统中，显示设备被称为 FrameBuffer 设备，对应的设备文件为 /dev/fbX(X 为 数字 0,1,2,3 等)
 
+> 在开发板系统中，/dev/fb0 设备节点是 LCD 屏
 
+应用程序读写 /dev/fbx 相当于读写显示设备的显示缓冲区
+
+`dd if=/dev/zero of=/dev/fb0 bs=1024 count=1125`
+
+上述命令的作用就是将 1125x1024 个字节的数据全部写入到 LCD 显存当中，这些数据都是 0x0
+
+### 19.2 LCD 的基础知识
+
+不多介绍
+
+### 19.3 LCD 应用编程介绍
+
+使用应用程序 IO 操控 /dev/fb0 文件，步骤如下：
+
+1. 首先打开 /dev/fbx 设备文件
+2. 使用 ioctl函数获取到当前显示设备的参数信息，如屏幕的分辨率，像素格式，根据屏幕参数计算显示缓冲区的大小
+3. 通过存储映射 IO 方式将屏幕的显示缓冲区映射到用户空间（mmap）
+4. 映射成功后可以直接读写屏幕的显示缓冲区，进行绘图或者图片显示等操作
+5. 完成显示后，使用 munmap 取消映射，调用 close 关闭设备文件
+
+#### 19.3.1 使用 ioctl 获取屏幕参数信息
+
+* FBIOGET_VSCREENINFO
+
+获取 FrameBuffer 设备的可变参数信息，该可变参数使用 struct fb_var_screeninfo 结构体来描述
+
+```c
+struct fb_var_screeninfo fb_var;
+ioctl(fd, FBIOGET_VSCREENINFO, &fb_var);
+```
+
+* FBIOPUT_VSCREENINFO
+
+设置 FrameBuffer 设备的可变参数信息
+
+```c
+struct fb_var_screeninfo fb_var = {0};
+/* 对 fb_var 进行数据填充 */
+...
+ioctl(fd, FIOPUT_VSCREENINFO, &fb_var);    
+```
+
+* FBIOGET_FSCREENINFO
+
+获取设备的固定信息
+
+```c
+struct fb_fix_screeninfo fb_fix;
+inctl(fd, FBIOGET_FSCREENINFO, &fb_fix);
+```
+
+这三个宏和函数在 /usr/include/linux 的 fb.h 里面
+
+**fb_var_screeninfo 结构体**
+
+```c
+struct fb_var_screeninfo {
+    __u32 xres; /* 可视区域，一行有多少个像素点， X 分辨率 */
+    __u32 yres; /* 可视区域，一列有多少个像素点， Y 分辨率 */
+    __u32 xres_virtual; /* 虚拟区域，一行有多少个像素点 */
+    __u32 yres_virtual; /* 虚拟区域，一列有多少个像素点 */
+    __u32 xoffset; /* 虚拟到可见屏幕之间的行偏移 */
+    __u32 yoffset; /* 虚拟到可见屏幕之间的列偏移 */
+    __u32 bits_per_pixel; /* 每个像素点使用多少个 bit 来描述，也就是像素深度 bpp */
+    __u32 grayscale; /* =0 表示彩色, =1 表示灰度, >1 表示 FOURCC 颜色 */
+    /* 用于描述 R、 G、 B 三种颜色分量分别用多少位来表示以及它们各自的偏移量 */
+    struct fb_bitfield red; /* Red 颜色分量色域偏移 */
+    struct fb_bitfield green; /* Green 颜色分量色域偏移 */
+    struct fb_bitfield blue; /* Blue 颜色分量色域偏移 */
+    struct fb_bitfield transp; /* 透明度分量色域偏移 */
+    __u32 nonstd; /* nonstd 等于 0，表示标准像素格式；不等于 0 则表示非标准像素格式 */
+    __u32 activate;
+    __u32 height; /* 用来描述 LCD 屏显示图像的高度（以毫米为单位） */
+    __u32 width; /* 用来描述 LCD 屏显示图像的宽度（以毫米为单位） */
+    __u32 accel_flags;
+    /* 以下这些变量表示时序参数 */
+    __u32 pixclock; /* pixel clock in ps (pico seconds) */
+    __u32 left_margin; /* time from sync to picture */
+    ...
+}
+```
+
+**fb_bitfield 结构体**
+
+```c
+struct fb_bitfield {
+    __u32 offset; /* 偏移量 */
+    __u32 length; /* 长度 */
+    __u32 msb_right; /* != 0 : Most significant bit is right */
+};
+```
+
+**fb_fix_screeninfo 结构体**
+
+```c
+struct fb_fix_screeninfo {
+    char id[16]; /* 字符串形式的标识符 */
+    unsigned long smem_start; /* 显存的起始地址（物理地址） */
+    __u32 smem_len; /* 显存的长度 */
+    __u32 type;
+    __u32 type_aux;
+    __u32 visual;
+    __u16 xpanstep;
+    __u16 ypanstep;
+    __u16 ywrapstep;
+    __u32 line_length; /* 一行的字节数 */
+    unsigned long mmio_start; /* Start of Memory Mapped I/O(physical address) */
+    __u32 mmio_len; /* Length of Memory Mapped I/O */
+    __u32 accel; /* Indicate to driver which specific chip/card we have */
+    __u16 capabilities;
+    __u16 reserved[2];
+}
+```
+
+获取屏幕信息的程序
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <linux/fb.h>
+
+int main(int argc, char *argv[])
+{
+    struct fb_fix_screeninfo fb_fix;
+    struct fb_var_screeninfo fb_var;
+    int fd;
+    /* 打开 framebuffer 设备 */
+    if (0 > (fd = open("/dev/fb0", O_WRONLY)))
+    {
+        perror("open error");
+        exit(-1);
+    }
+    /* 获取参数信息 */
+    ioctl(fd, FBIOGET_VSCREENINFO, &fb_var);
+    ioctl(fd, FBIOGET_FSCREENINFO, &fb_fix);
+    printf("分辨率: %d*%d\n"
+           "像素深度 bpp: %d\n"
+           "一行的字节数: %d\n"
+           "像素格式: R<%d %d> G<%d %d> B<%d %d>\n",
+           fb_var.xres, fb_var.yres, fb_var.bits_per_pixel,
+           fb_fix.line_length,
+           fb_var.red.offset, fb_var.red.length,
+           fb_var.green.offset, fb_var.green.length,
+           fb_var.blue.offset, fb_var.blue.length);
+    close(fd);
+    exit(0);           
+}
+```
+
+![image-20230606154034472](cApplication.assets/image-20230606154034472.png)
+
+从结果可以看到高 5 位是 R 中间 6 位是 G 最后 5 位是 B，这是一个 RGB565 格式的显示设备（当然可以设置设备树使其支持 888 位）
+
+#### 19.3.2 使用 mmap 将显示缓冲区映射到用户空间
+
+因为数据量较大，使用普通 IO 方式效率低下，建议使用存储映射的方式
+
+### 19.4 LCD 应用编程练习之 LCD 基本操作
+
+详情看代码
+
+### 19.5 LCD 应用编程连携之显示 BMP 图片
+
+#### 19.5.1  BMP 图像介绍
+
+BMP 全称 Bitmap 是 window 操作系统中标准图像文件格式，文件后缀为 .bmp，采用位映射存储格式，了图像深度可选以外，图像数据没有进行任何压缩，因此， BMP 图像文件所占用的空间很大，但是没有失真、 并且解析 BMP 图像简单
+
+![image-20230606164818089](cApplication.assets/image-20230606164818089.png)
+
+**bmp 文件头**
+
+这个是 windows 下为 bmp 文件头定义的结构体
+
+```c
+typedef struct tagBITMAPFILEHEADER
+{
+    UINT16 bfType;
+    DWORD bfSize;
+    UINT16 bfReserved1;
+    UINT16 bfReserved2;
+    DWORD bfOffBits;
+} BITMAPFILEHEADER;
+```
+
+| 变量名      | 地址偏移 | 大小    | 作用                                                         |
+| ----------- | -------- | ------- | ------------------------------------------------------------ |
+| bfType      | 00H      | 2 bytes | 说明 bmp 文件的类型，可取值为： ①BM – Windows ②BA – OS/2 Bitmap Array ③CI – OS/2 Color Icon④CP – OS/2 Color Pointer ⑤IC – OS/2 Icon ⑥PT – OS/2 Pointer |
+| bfSize      | 02H      | 4 bytes | 说明该文件的大小，以字节为单位。                             |
+| bfReserved1 | 06H      | 2 bytes | 保留字段，必须设置为 0。                                     |
+| bfReserved2 | 08H      | 2 bytes | 保留字段，必须设置为 0。                                     |
+| bfOffBits   | 0AH      | 4 bytes | 说明从文件起始位置到图像数据**之间**的字节偏移量。 这个参数非常有用，因为位图信息头和调色板的长度 会根据不同的情况而变化，所以我们可以用这个偏移 量迅速从文件中找到图像数据的偏移地址。 |
+
+**位图信息头**
+
+这个是 windows 下为 bmp 位图信息头定义的结构体
+
+```c
+typedef struct tagBITMAPINFOHEADER {
+    DWORD biSize;
+    LONG biWidth;
+    LONG biHeight;
+    WORD biPlanes;
+    WORD biBitCount;
+    DWORD biCompression;
+    DWORD biSizeImage;
+    LONG biXPelsPerMeter;
+    LONG biYPelsPerMeter;
+    DWORD biClrUsed;
+    DWORD biClrImportant;
+} BITMAPINFOHEADER;
+```
+
+| 变量名          | 地址偏移 | 大小    | 作用                                                         |
+| --------------- | -------- | ------- | ------------------------------------------------------------ |
+| biSize          | 0EH      | 4 bytes | 位图信息头大小。                                             |
+| biWidth         | 12H      | 4 bytes | 图像的宽度，以像素为单位。                                   |
+| biHeight        | 16H      | 4 bytes | 图像的高度，以像素为单位。 注意，这个值除了用于描述图像的高度之外， 它还有另外一个用途，用于指明该图像是倒向 的位图、还是正向的位图。 如果该值是一个正数，说明是倒向的位图；如 果该值是一个负数，则说明是正向的位图。 一般情况下， BMP 图像都是倒向的位图，也就 是该值是一个正数。 |
+| biPlanes        | 1AH      | 2 bytes | 色彩平面数，该值总被设置为 1。                               |
+| biBitCount      | 1CH      | 2 bytes | 像素深度，指明一个像素点需要多少个 bit 数据 来描述，其值可为 1、 4、 8、 16、 24、 32 |
+| biCompression   | 1EH      | 4 bytes | 说明图像数据的压缩类型，取值范围如下： ①0 – RGB 方式 ②1 – 8bpp 的 RLE 方式，只用于 8bit 位图 ③2 – 4bpp 的 RLE 方式， 只用于 4bit 位图 ④3 – Bit-fields 方式 ⑤4 – 仅用于打印机 ⑥5 – 仅用于打印机 |
+| biSizeImage     | 22H      | 4 bytes | 说明图像的大小，以字节为单位，当压缩类型 为 BI_RGB 时，可设置为 0。 |
+| biXPelsPerMeter | 26H      | 4 bytes | 水平分辨率，用像素/米来表示，有符号整数。                    |
+| biYPelsPerMeter | 2AH      | 4 bytes | 垂直分辨率，用像素/米来表示，有符号整数。                    |
+| biClrUsed       | 2EH      | 4 bytes | 说明位图实际使用的彩色表中的颜色索引数。                     |
+| biClrImportant  | 32H      | 4 bytes | 说明对图像显示有重要影响的颜色索引的数 目，如果是 0，则表示都重要。 |
+
+**调色板**
+
+色板是单色、 16 色、 256 色位图图像文件所持有的，如果是 16 位、 24 位以及 32 位位图文件，则 BMP 文件组成部分中不包含调色板  
+
+**位图数据**
+
+位图数据其实就是**图像的数据**， 对于 24 位位图，使用 3 个字节数据来表示一个像素点的颜色，对于 16 位位图，使用 2 个字节数据来表示一个像素点的颜色，同理， 32 位位图则使用 4 个字节来描述
+
+![image-20230606170326512](cApplication.assets/image-20230606170326512.png)
+
+**RGB 和 Bit-Fields**
+
+RGB 格式采用均分的思想 比如 24 位 RGB，32 位的 ARGB
+
+BF 编码格式采用位域操作，人为确定 RGB 三分量所包含的信息容量
+
+> R、 G 和 B 分量的位域掩码分别是 0xF800、 0x07E0 和 0x001F，也就是 R 通道使用 2 个字节中的高 5 位表示， G 通道使用 2 个字节中的中间 6 位表示。而 B 通道则使用 2 个字节中的最低 5 位表示  
+
+#### 19.5.2 在 LCD 上显示 BMP 图像
+
+主要就是自定义 bmp 文件头，位图信息头结构体，然后把数据读到结构体里
+
+## 20. 在 LCD 上显示 jpeg 图像
+
+### 20.1 JPEG 简介
+
+国际标准组织为静态图像所建立的第一个国际数字图像压缩标准，也是至今一直在使用的、应用最广的图像压缩标准  
+
+有损压缩，以 .jph 或者 .jpeg 作为文件后缀
+
+### 20.2 libjpeg 简介
+
+既然 .jpg 是压缩文件，那就可以解压，使用 libjpeg 库对其进行解压，该库完全用 c 语言编写
+
+### 20.3 libjpeg 移植
+
+#### 20.3.1 下载源码包 http://www.ijg.org/files/
+
+#### 20.3.2 编译源码
+
+在 `/usr/local/` 创建安装目录 jpeg
+
+转到源码包，解压，进入文件夹
+
+* 配置工程
+
+先配置编译器为交叉编译器
+
+`export CC=/usr/local/arm/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-gcc`
+
+索引到安装目录生成配置文件
+
+`./configure --host=arm-poky-linux-gnueabi --prefix=/usr/local/jpeg/  `
+
+* 编译工程
+
+`make`
+
+* 安装
+
+`make install`
+
+安装完成
+
+![image-20230606203450868](cApplication.assets/image-20230606203450868.png)
+
+#### 20.3.4 移植到开发板
+
+复制 bin 文件到板子的 /usr/bin 里，复制 lib 的文件到 /usr/lib 里（为了不破坏软链接，建议压缩再复制过去，然后解压）
+
+`djpeg --help 有打印信息表示移植成功`
+
+### 20.4 libjpeg 使用说明
+
+该库提供 jpeg 解码， jpeg 编码和其他 jpeg 功能实现
+
+头文件 <jpeglib.h>
+
+* 解码操作过程
+
+  * 创建 jpeg 解码对象
+  * 指定解码数据源
+  * 读取图像信息
+  * 设置解码参数
+  * 开始解码
+  * 读取解码后的数据
+  * 解码完毕
+  * 释放/销毁解码对象
+
+  ```c
+  /* 定义 jpeg 解码对象 */
+  struct jpeg_decompress_struct cinfo;
+  /* 定义错误处理对象 */
+  struct jpeg_error_mgr jerr;
+  ```
+
+#### 20.4.1 错误处理
+
+```c
+//初始化错误处理对象、并将其与解压对象绑定（之后如果解压处理有错误将会执行默认处理）
+cinfo.err = jpeg_std_error(&jerr);
+// 如果要修改默认的错误处理函数，可以这样操作
+void my_error_exit(struct jpeg_decompress_struct *cinfo)
+{
+/* ... */
+}
+cinfo.err.error_exit = my_error_exit;
+```
+
+#### 20.4.2 创建解码对象
+
+```c
+jpeg_create_decompress(&cinfo);
+```
+
+创建之后记得使用 jpeg_destroy_decompress 销毁释放对象
+
+#### 20.4.3 设置数据源
+
+```c
+FILE *jpeg_file = NULL;
+jpeg_file = fopen("./image.jpg","r");
+if(NULL == jpeg_file)
+{
+    perror("fopen error");
+    return -1;
+}
+// 指定图像文件
+jpeg_stdio_src(&cinfo, jpeg_file); 
+```
+
+#### 20.4.4 读取 jpeg 文件的头信息
+
+```c
+jpeg_read_header(&cinfo, TRUE);
+```
+
+调用之后，得到 jpeg 图像的一些信息
+
+```c
+cinfo.image_width //jpeg 图像宽度
+cinfo.image_height //jpeg 图像高度
+cinfo.num_components //颜色通道数
+cinfo.jpeg_color_space //jpeg 图像的颜色空间
+```
+
+支持以下颜色空间
+
+```c
+/* Known color spaces. */
+typedef enum {
+    JCS_UNKNOWN, /* error/unspecified */
+    JCS_GRAYSCALE, /* monochrome */
+    JCS_RGB, /* red/green/blue, standard RGB (sRGB) */
+    JCS_YCbCr, /* Y/Cb/Cr (also known as YUV), standard YCC */
+    JCS_CMYK, /* C/M/Y/K */
+    JCS_YCCK, /* Y/Cb/Cr/K */
+    JCS_BG_RGB, /* big gamut red/green/blue, bg-sRGB */
+    JCS_BG_YCC /* big gamut Y/Cb/Cr, bg-sYCC */
+} J_COLOR_SPACE;
+```
+
+#### 20.4.5 设置解码处理参数
+
+![image-20230606213308388](cApplication.assets/image-20230606213308388.png)
+
+#### 20.4.6 开始解码
+
+调用 jpeg_start_decompress 函数进行解码
+
+```c
+jpeg_start_decompress(&cinfo);
+/*
+调用之后，会将解压后的图像信息填充到 cinfo 结构当中
+结构中。譬如 ，输出图像宽度cinfo.output_width，输出图像高度 cinfo.output_height，每个像素中的颜色通道数 cinfo.output_components（比如灰度为 1，全彩色 RGB888 为 3）等
+*/
+```
+
+#### 20.4.7 读取数据
+
+libjpeg 默认解码得到的图像数据是 BGR888 格式
+
+```c
+typedef struct bgr888_color {
+    unsigned char red;
+    unsigned char green;
+    unsigned char blue;
+} __attribute__ ((packed)) bgr888_t;
+```
+
+分配一个行缓冲区
+
+```c
+bgr888_t *line_buf = malloc(cinfo.output_width * cinfo.output_components);
+/*
+cinfo.output_width 图像的宽度
+cinfo.output_components 一个像素的字节大小
+*/
+```
+
+分配好后，调用 jpeg_read_scanlines 来读取数据
+
+```c
+jpeg_read_scanlines(&cinfo, &buf, 1);
+/*
+1 表示每次读取1行，通常都设置为1
+*/
+/* 每次读取一行，循环读取 */
+while(cinfo.output_scanline < cinfo.output_heiht)
+{
+    jpeg_read_scanlines(&cinfo, buffer, 1);
+    // do some 
+}
+```
+
+#### 20.4.8 结束解码
+
+```c
+jpeg_finish_decompress(&cinfo);
+```
+
+#### 20.4.9 释放/销毁解码对象
+
+```c
+jpeg_destroy_decompress(&cinfo);
+```
+
+### 20.5 libjpeg 应用编程
+
+查看代码
+
+## 21. 在 LCD 上显示 png 图片
+
+### 21.1 PNG 简介
+
+无损压缩算法位图格式，压缩比高，生成文件体积小
+
+**特点**
+
+![image-20230607125529737](cApplication.assets/image-20230607125529737.png)
+
+### 21.2 libpng 简介
+
+免费开源的 c 语言函数库，支持 png 图像的解码编码等功能
+
+### 21.3 zlib 移植
+
+zlib 其实是一套包含了数据压缩算法的函式库，libpng 库依赖 zlib 库
+
+#### 21.3.1 下载源码包
+
+网站：https://www.zlib.net/fossils/  
+
+![image-20230607130440242](cApplication.assets/image-20230607130440242.png)
+
+和以前一样，配置，编译，安装
+
+#### 21.3.2 移植到开发板
+
+将 lib 下多有动态链接库文件拷贝到开发板 Linux 系统 /usr/lib 目录，先删除原来的 zlib 库文件
+
+`rm -rf /usr/lib/libz.* /lib/libz.*`
+
+### 21.4 libpng 移植
+
+#### 21.4.1 下载源码包
+
+网址： https://github.com/glennrp/libpng/releases  
+
+选择 libpng-1.6.35
+
+#### 21.4.2 编译源码
+
+编译之前先添加依赖库的文件路径
+
+```sh
+export LDFLAGS="${LDFLAGS} -L/home/dt/tools/zlib/lib"
+export CFLAGS="${CFLAGS} -I/home/dt/tools/zlib/include"
+export CPPFLAGS="${CPPFLAGS} -I/home/dt/tools/zlib/include"
+```
+
+移植到开发板，先删除原来的库
+
+`rm -rf /lib/libpng* /usr/lib/libpng*`
+
+### 21.5 libpng 使用说明
+
+http://www.libpng.org/pub/png/libpng-1.4.0-manual.pdf
+http://www.libpng.org/pub/png/libpng-manual.txt
+
+#### 21.5.1 libpng 的数据结构
+
+头文件 <png.h> ，两个重要的数据结构体 png_struct 和 png_info
+
+#### 21.5.2 创建和初始化 png_struct 对象
+
+创建用于 png 解码的 png_struct 对象的函数 png_create_read_struct
+
+创建用于 png 编码的 png_struct 对象的函数 png_create_write_struct
+
+```c
+png_structp png_create_read_struct(png_const_charp user_png_ver, png_voidp error_ptr, png_error_ptr error_fn, png_error_ptr warn_fn);
+/*
+返回的指针指向所创建的 png_struct 对象失败返回 NULL
+有4个参数
+user_png_ver 指的是 libpng 版本信息 通常设置 PNG_LIBPNG_VER_STRING
+error_fn 自定义错误函数
+warn_fn 自定义警告函数
+*/
+```
+
+```c
+png_structp png_ptr = NULL;
+png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+if(!png_ptr)
+    return -1;
+```
+
+#### 21.5.3 创建和初始化 png_info 对象
+
+该数据结构描述 png 图像的信息
+
+```c
+png_infop png_create_info_struct(png_const_structrp png_ptr);
+/*
+创建成功返回 png_infop 指针，失败返回 NULL
+*/
+```
+
+```c
+png_infop info_ptr = NULL;
+info_ptr = png_create_info_struct(png_const_structrp png_ptr);
+if(NULL == info_ptr)
+{
+    png_destroy_read_struct(&png_ptr, NULL, NULL);
+    return -1;
+}
+```
+
+png_destroy_read_struct 用于摧毁 png_struct 对象的函数
+
+#### 21.5.4 设置错误返回点
+
+当没有执行自定义错误函数时，系统默认跳转到错误返回点，这个返回点需要执行释放，销毁等清理工作，使用以下两个库函数设置返回点
+
+**setjmp 和 longjmp**
+
+goto 只能在函数内部进行跳转，不能跨越函数，所以可以使用 setjmp 和 longjmp
+
+```c
+#include <setjmp.h>
+int setjmp(jmp_buf env); // 设置转跳点
+void longjmp(jmp_buf env, int val); // 跳到转跳点
+```
+
+使用
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <setjmp.h>
+static jmp_buf buf; // 包含了调用 setjmp 时存储的环境信息
+static void hello(void)
+{
+    printf("hello world!\n");
+    longjmp(buf, 123); // 跳转到 setjmp 这里
+    printf("Nice to meet you!\n");
+}
+int main(void)
+{
+    int ret = 0;
+    ret = setjmp(buf); // 记录返回值
+    if (0 == ret)
+    {
+        printf("First return\n");
+        hello();
+    }
+    else if (123 == ret)
+    {
+        printf("Second return\n");
+    }
+    exit(0);
+}
+```
+
+**libpng 设置错误返回点**
+
+默认错误处理函数回调用 longjum 来进行跳转，所以要使用 setjmp 来设置一个错误返回点
+
+```c
+/* 设置错误返回点 */
+if (setjmp(png_jmpbuf(png_ptr))) {
+png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+return -1;
+}
+```
+
+#### 21.5.5 指定数据源
+
+指定需要进行解码的 png 图像，libpng 提供了 png_init_io 函数指定数据源，该数据源以文件输入流的方式提供
+
+```c
+png_init_io(png_structrp png_ptr, png_FILE_P fp);
+```
+
+使用
+
+```c
+FILE *png_file = NULL;
+/* 打开 png 文件 */
+png_file = fopen("image.png", "r"); //以只读方式打开
+if (NULL == png_file) {
+perror("fopen error");
+return -1;
+}
+/* 指定数据源 */
+png_init_io(png_ptr, png_file);
+```
+
+#### 21.5.6 读取 png 图像数据并解码
+
+**heigh-level 接口**
+
+用户的内存空间足够大， 可以一次性存放整个 png 文件解码后的数据
+数据输出格式限定为 libpng 预定义的数据转换格式
+
+| libpng 预定义转换类型      | 说明                                            |
+| -------------------------- | ----------------------------------------------- |
+| PNG_TRANSFORM_IDENTITY     | No transformation                               |
+| PNG_TRANSFORM_STRIP_16     | Strip 16-bit samples to 8 bits                  |
+| PNG_TRANSFORM_STRIP_ALPHA  | Discard the alpha channel                       |
+| PNG_TRANSFORM_PACKING      | Expand 1, 2 and 4-bit samples to bytes          |
+| PNG_TRANSFORM_PACKSWAP     | Change order of packed pixels to LSB first      |
+| PNG_TRANSFORM_EXPAND       | Perform set_expand()                            |
+| PNG_TRANSFORM_INVERT_MONO  | Invert monochrome images                        |
+| PNG_TRANSFORM_SHIFT        | Normalize pixels to the sBIT depth              |
+| PNG_TRANSFORM_BGR          | Flip RGB to BGR, RGBA to BGRA                   |
+| PNG_TRANSFORM_SWAP_ALPHA   | Flip RGBA to ARGB or GA to AG                   |
+| PNG_TRANSFORM_INVERT_ALPHA | Change alpha from opacity to transparency       |
+| PNG_TRANSFORM_SWAP_ENDIAN  | Byte-swap 16-bit samples                        |
+| PNG_TRANSFORM_GRAY_TO_RGB  | Expand grayscale samples to RGB (or GA to RGBA) |
+
+只需要调用一个函数
+
+```c
+png_read_png(png_structrp png_ptr, png_inforp info_ptr, int transforms, png_voidp params);
+/*
+transforms 为上面的参数
+params 设置为 NULL
+*/
+```
+
+使用实例：
+
+```c
+png_read_png(png_ptr, info_ptr, PNG_TRANSFORM_STRIP_ALPHA, NULL);
+```
+
+该函数相当于调用一系列 low-level 函数
+
+* 调用 png_read_info 获取 png 图像信息
+* 根据参数 transforms 所指定的转换类型对数据输出转换格式进行设置
+* 调用 png_read_image 一次性把整个 png 文件的数据解码出来，将解码后的数据存放在内存中
+* 调用 png_read_end 结束解码
+
+**low-level 接口**
+
+* 读取 png 图像的信息
+
+```c
+png_read_info(png_ptr, info_ptr);
+```
+
+* 查询图像的信息
+
+```c
+unsigned int width = png_get_image_width(png_ptr, info_ptr); //获取 png 图像的宽度
+unsigned int height = png_get_image_height(png_ptr, info_ptr); //获取 png 图像的高度
+unsigned char depth = png_get_bit_depth(png_ptr, info_ptr); //获取 png 图像的位深度
+unsigned char color_type = png_get_color_type(png_ptr, info_ptr); //获取 png 图像的颜色类型，color type 在 png.h 头文件中定义
+```
+
+* 设置解码输出参数（转换参数）
+
+这步非常重要，用户可以指定数据输出转换的格式，比如 RGB888， BGR888、 ARGB8888 等数据输出格式  
+
+```c
+unsigned char depth = png_get_bit_depth(png_ptr, info_ptr);
+unsigned char color_type = png_get_color_type(png_ptr, info_ptr);
+if (16 == depth)
+	png_set_strip_16(png_ptr); //将 16 位深度转为 8 位深度
+if (8 > depth)
+	png_set_expand(png_ptr); //如果位深小于 8，则扩展为 24-bit RGB
+if (PNG_COLOR_TYPE_GRAY_ALPHA == color_type)
+	png_set_gray_to_rgb(png_ptr); //如果是灰度图，则转为 RGB
+```
+
+* 更新 png 数据的详细信息
+
+`png_read_update_info(png_ptr, info_ptr);`
+
+* 读取 png 数据并解码
+
+```c
+void png_read_image(png_ptr, row_pointers);
+/*
+row_pointers 是一个 png_byrepp 类型的指针变量
+png_bytep row_pointers[height];
+*/
+```
+
+* 结束读取，解码
+
+```c
+png_read_end(png_ptr, info_ptr);
+```
+
+> 使用 low-level 需要自己指定内存空间，而 high-level 方式则会自动分配一块内存
+
+#### 21.5.7 读取解码后的数据
+
+对于 low-level 方式，存放图像数据的缓存区是由调用者分配的，直接获取数据即可，对于 high-levle 方式，存放图像数据的缓存是由 png_read_png 函数内部分配的，可以通过 png_get_rows 函数获取
+
+```c
+png_bytepp row_pointers = NULL;
+row_pointers = png_get_rows(png_ptr, info_ptr);
+// 获取到指向每一行数据缓冲区的指针数组
+```
+
+#### 21.5.8 结束销毁对象
+
+```c
+void png_destroy_read_struct(png_structpp png_ptr_ptr, png_infopp info_ptr_ptr, png_infopp end_info_ptr_ptr);
+```
+
+使用方法：
+
+```c
+png_destroy_read_struct(png_ptr, info_ptr, NULL);
+```
+
+### 21.6 libpng 应用编程
+
+## 22. LCD 横屏切换为竖屏
+
+### 22.1. 横屏显示如何切换为竖屏显示
+
+lcd 各个像素点与显存空间的对应关系
+
+![image-20230608202835298](cApplication.assets/image-20230608202835298.png)
+
+```c
+base + ((height - 1- x) * width + y)) * pix_bytes;
+/*
+x,y 表示竖屏方向下的 x,y 坐标
+脑部一下，用数学方法把坐标转一下
+*/
+```
+
+## 23. 在 LCD 上显示字符
+
+### 23.1 使用传统的字模
+
+```c
+static unsigned char ch_char1[86][8] = {
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0xF0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07},
+    {0xF0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07},
+    {0xF0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07},
+    {0xF0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07},
+    {0xF0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07},
+    {0xF0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07},
+    {0xF0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07},
+    {0xF0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07},
+    {0xF0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07},
+    {0x00, 0x00, 0x00, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0xFF, 0xFF, 0xFF, 0x01},
+    {0x00, 0xFC, 0x07, 0xC0, 0xFF, 0xFF, 0xFF, 0x01},
+    {0x00, 0xFC, 0x07, 0xC0, 0xFF, 0xFF, 0xFF, 0x01},
+    {0x00, 0xFC, 0x07, 0xC0, 0xFF, 0xFF, 0xFF, 0x01},
+    {0x00, 0xFC, 0x07, 0xC0, 0xFF, 0xFF, 0xFF, 0x01},
+    {0x00, 0xFC, 0x07, 0xC0, 0xFF, 0xFF, 0xFF, 0x01},
+    {0x00, 0xFC, 0x07, 0xC0, 0xFF, 0xFF, 0xFF, 0x01},
+    {0x00, 0xFC, 0x07, 0xC0, 0xFF, 0xFF, 0xFF, 0x01},
+    {0x00, 0xFC, 0x07, 0xC0, 0xFF, 0xFF, 0xFF, 0x01},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0x00, 0xFC, 0x07, 0xC0, 0x7F, 0x00, 0x00, 0x00},
+    {0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F},
+    {0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F},
+    {0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F},
+    {0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F},
+    {0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F},
+    {0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F},
+    {0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F},
+    {0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F},
+    {0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /*"正",0*/
+};
+```
+
+### 23.2 freetype 简介
+
+和 windows 一样，linux 也有字符文件，在 /usr/share/fonts 里
+
+，但是解析这些文件可以使用 freetype 库来进行
+
+### 23.3 freetype 移植
+
+作为一个嵌入式 linux 软件开发人员，学会移植很重要
+
+#### 23.3.1 下载 FreeType 源码
+
+https://download.savannah.gnu.org/releases/freetype/  
+
+我们选择 2.8 版本的
+
+#### 23.3.2 交叉编译源码
+
+进入到源码文件夹
+
+```sh
+vi include/freetype/config/ftoption.h
+```
+
+使能这两个宏 
+
+```sh
+#define FT_CONFIG_OPTION_SYSTEM_ZLIB
+#define FT_CONFIG_OPTION_USE_PNG
+```
+
+配置工程源码
+
+```sh
+./configure --prefix=/usr/local/freetype/ --host=arm-poky-linux-gnueabi --with-zlib=yes --with-bzip2=no --with-png=yes --with-harfbuzz=no ZLIB_CFLAGS="-I/usr/local/zlib/include -L/usr/local/zlib/lib" ZLIB_LIBS=-lz LIBPNG_CFLAGS="-I/usr/local/libpng/include -L/usr/local/libpng/lib" LIBPNG_LIBS=-lpng
+```
+
+#### 23.3.3 安装目录下的文件
+
+![image-20230608220835002](cApplication.assets/image-20230608220835002.png)
+
+#### 23.3.4 移植到开发板
+
+### 23.4 freetype 库的使用
+
+FreeType 官方提供了详细地使用帮助文档，以下便是这些文档的链接地址：
+https://www.freetype.org/freetype2/docs/tutorial/step1.html
+https://www.freetype.org/freetype2/docs/tutorial/step2.html
+https://www.freetype.org/freetype2/docs/reference/index.html 
+
+以下这个链接是一份中文参考文档，大家可以看一下，笔者也不知道是哪位作者编写的，写的非常详细！
+https://www.doc88.com/p-7178359224563.html?r=1 
+
+几个概念：
+
+* 字形
+
+字符图像就叫字形，比如宋体的国字和微软雅黑的国字就是两种不同的字形
+
+* 字形索引
+
+通过字形索引找到对应的字形，字形索引是由字符编码转换而来的
+
+* 像素点，点，dpi
+
+点是一个简单的物理单位，在数字印刷中，一个点等于 1/72 英寸（1英寸等于 25.4 毫米），dpi 表示每英寸的像素点数，300*400dpi 表示在水平方向，每英寸由 300 个像素点，在垂直方向，每英寸由 400 个像素点
+
+```sh
+像素点数 = 点数 * dpi/72
+```
+
+**字形的布局**
+
+水平布局和垂直布局
+
+![image-20230608221658433](cApplication.assets/image-20230608221658433.png)
+
+![image-20230608221705177](cApplication.assets/image-20230608221705177.png)
+
+* 基准线，原点
+
+不管是水平布局还是垂直布局，都有一个 origin 点，经过原点的水平线和垂直线称为基准线
+
+* 字形的宽度和高度
+
+图中使用 width 和 height 来表示
+
+* bearingX 和 bearingY
+
+bearingX 表示从垂直基线到字形轮廓最左边的距离
+
+bearingY 则表示从水平基线到字形轮廓最上边的距离
+
+* xMin/xMax、yMin/yMax
+
+通过这4个位置可以构成一个字形的边界框
+
+* advance
+
+advance 表示步进宽度，相邻两个原点位置的距离
+
+字符显示如何对齐？
+
+![image-20230608222811238](cApplication.assets/image-20230608222811238.png)
+
+不同的字，他的最左边的轮廓到垂直基线的距离是不同的，相邻两个垂直基线的距离就叫步进宽度
+
+当我们要在屏幕上画字形的时候，要定位到字形的左上角位置，从左上角开始，从左到右，从上到下，通过 bearingY 和 bearingX 来确定左上角的位置。比如将 （100，100）作为字符的原点，那么左上角的位置就是（100+bearingX，100-bearingY）
+
+#### 23.4.1 初始化 FreeType 库
+
+```c
+FT_Library library;
+FT_Error error;
+error = FT_Init_FreeType(&library);
+if(error)
+    fprintf(stderr."Error:failed\r\n");
+```
+
+FT_Init_FreeType 完成了以下的操作
+
+* 创建了 FreeType 库对象，将 library 作为库对象的句柄
+* FT_Init_FreeType 调用成功返回 0，失败返回非零错误码
+
+#### 23.4.2 加载 face 对象
+
+其实就是加载 Linux 系统内的字体文件
+
+"Times New Roman Regular"和"Times New Roman Italic"对应两种不同的 face  
+
+```c
+FT_Library library; // 库对象句柄
+FT_Face face; // face 对象句柄
+FT_Error error; // 
+// 初始化 FreeType 库
+FT_Init_FreeType(&library);
+error = FT_New_Face(library, "/usr/share/fonts/font.ttf", 0, &face);
+if(error)
+{
+    /* 错误处理 */
+}
+```
+
+**FT_New_Face 函数原型**
+
+```c
+FT_Error FT_New_Face(FT_Library library, const char *filepathname, FT_Long face_index, FT_Face *aface);
+/*
+library 库句柄对象
+face_index 通常设置为0
+aface 指向新建 face 对象的指针，失败返回 NULL
+调用成功返回0失败非零的错误码
+*/
+```
+
+#### 23.4.3 设置字体大小
+
+**FT_Set_Pixel_Size 函数**
+
+```c
+FT_Set_Pixel_Size(face, 50, 50);// 以像素为单位
+// 宽度或者高度任意一个为0表示与另外一个相同
+```
+
+**FT_Set_Char_Size 函数**
+
+```c
+error = FT_Set_Char_Size(
+	face,
+    16*64, // 以 1/64 点为单位的字体宽度
+    16*64, // 以 1/64 点为单位的字体高度
+    300, // 水平方向上每英寸的像素点数
+    300, // 垂直方向上的每英寸的像素点数
+);
+```
+
+![image-20230608225156671](cApplication.assets/image-20230608225156671.png)
+
+#### 23.4.4 加载字形图像
+
+获取字符的字形素银
+
+通过 FT_Get_Char_inde 函数将字符编码转换为字形索引，默认使用 UTF-16 编码方式
+
+## 24. PWM 应用编程
+
+### 24.1 应用层如何操控 PWM
+
+也是通过 sys/class/pwm 下的 sysfs 方式，这个 8 个 pwmchipx 对应了 8 个 pwm 控制器
+
+![image-20230609103648878](cApplication.assets/image-20230609103648878.png)
+
+进入到 pwmchip0 目录下：
+
+![image-20230609103715017](cApplication.assets/image-20230609103715017.png)
+
+* npwm 只读属性，可以得知该 pwm 控制器下共有几路 pwm， pwmchip0 对应 PWM1（这个已经被用作 LCD 背光控制了，而且其他的 PWM 都不能使用，因为 IO 资源不够）
+* export 使用  pwm 之前，要将其导出 
+
+```sh
+echo 0 > export
+```
+
+由于每一个控制器只有一个 PWM 所以只能使用编号 0
+
+* unexport 将导出的 PWM 删除
+
+```sh
+echo 0 > unexport
+```
+
+**如何控制 PWM**
+
+当导出之后，生成 pwm0 目录
+
+![image-20230609104358046](cApplication.assets/image-20230609104358046.png)
+
+* enable 可读可写，写入 0 表示禁止 PWM，写入 1 表示使能 PWM
+
+```sh
+echo 0 > enable # 禁止 PWM
+echo 1 > enable # 使能 PWM 
+```
+
+* polarity 设置极性，可读可写
+
+```sh
+echo normal > polarity # 默认极性
+echo inversed > polarity # 极性反转
+```
+
+* period 配置 PWM 周期，可读可写，写入一个字符串数字值，纳秒为单位
+
+```sh
+echo 10000 > period #设置周期为 10 us
+```
+
+* duty_cycle 配置 PWM 占空比，可读可写，以纳秒为单位
+
+```sh
+echo 5000 > duty_cycle # 设置占空比为 5us
+```
+
+### 24.2 编写应用程序
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+
+static char pwm_path[100];
+
+static int pwm_config(const char *attr, const char *val)
+{
+    char file_path[100];
+    int len;
+    int fd;
+    sprintf(file_path, "%s/%s", pwm_path, attr);
+    if (0 > (fd = open(file_path, O_WRONLY)))
+    {
+        perror("open error");
+        return fd;
+    }
+    len = strlen(val);
+    if (len != write(fd, val, len))
+    {
+        perror("write error");
+        close(fd);
+        return -1;
+    }
+    close(fd); // 关闭文件
+    return 0;
+}
+int main(int argc, char *argv[])
+{
+    /* 校验传参 */
+    if (4 != argc)
+    {
+        fprintf(stderr, "usage: %s <id> <period> <duty>\n",
+                argv[0]);
+        exit(-1);
+    }
+    /* 打印配置信息 */
+    printf("PWM config: id<%s>, period<%s>, duty<%s>\n",
+           argv[1], argv[2],
+           argv[3]);
+    /* 导出 pwm */
+    sprintf(pwm_path, "/sys/class/pwm/pwmchip%s/pwm0", argv[1]);
+    if (access(pwm_path, F_OK))
+    { // 如果 pwm0 目录不存在, 则导出
+        char temp[100];
+        int fd;
+        sprintf(temp, "/sys/class/pwm/pwmchip%s/export", argv[1]);
+        if (0 > (fd = open(temp, O_WRONLY)))
+        {
+            perror("open error");
+            exit(-1);
+        }
+        if (1 != write(fd, "0", 1)) // 往导出文件里写入字符串0
+        { // 导出 pwm
+            perror("write error");
+            close(fd);
+            exit(-1);
+        }
+        close(fd); // 关闭文件
+    }
+
+    /* 配置 PWM 周期 */
+    if (pwm_config("period", argv[2]))
+        exit(-1);
+    /* 配置占空比 */
+    if (pwm_config("duty_cycle", argv[3]))
+        exit(-1);
+    /* 使能 pwm */
+    pwm_config("enable", "1");
+    /* 退出程序 */
+    exit(0);
+}
+```
+
+如果想要测试 PWM 可以对出厂系统的内核源码进行配置，修改设备树，禁用 LCD 和 backlight 背光设备（status 属性设置为 disabled 即可）
+
+## 25. V4L2 摄像头应用编程
+
+### 25.1 V4L2 简介
+
+V4L2 是 Video for linux two 的简称，使用 V4L2 设备驱动框架注册的设备会在 Linux 系统 /dev/ 目录下生成对应的设备节点文件，设备节点名称通常为 videoX（X 标准一个数字编号 0,1,2,3...），每一个设备节点文件代表一个视频类设备
+
+![image-20230609111853849](cApplication.assets/image-20230609111853849.png)
+
+### 25.2 V4L2 摄像头应用程序
+
+编程的流程如下：
+
+![image-20230609111927833](cApplication.assets/image-20230609111927833.png)
+
+几乎对摄像头的所有操作都是通过 ioctl 完成，搭配不同的指令请求不同的操作，这些指令定义在头文件 linux/videodev2.h 中
+
+```c
+/*
+* I O C T L C O D E S F O R V I D E O D E V I C E S
+*
+*/
+#define VIDIOC_QUERYCAP _IOR('V', 0, struct v4l2_capability)
+#define VIDIOC_RESERVED _IO('V', 1)
+#define VIDIOC_ENUM_FMT _IOWR('V', 2, struct v4l2_fmtdesc)
+#define VIDIOC_G_FMT _IOWR('V', 4, struct v4l2_format)
+#define VIDIOC_S_FMT _IOWR('V', 5, struct v4l2_format)
+...
+```
+
+每一个不同的指令宏表示向设备请求不同的操作，第三个参数 struct 表示使用宏时要传入相应的结构体
+
+```c
+struct v4l2_capability cap;
+……
+ioctl(fd, VIDIOC_QUERYCAP, &cap);
+```
+
+常用的视频采集类设备指令：
+
+| V4L2 指令                  | 描述                                       |
+| -------------------------- | ------------------------------------------ |
+| VIDIOC_QUERYCAP            | 查询设备的属性/能力/功能                   |
+| VIDIOC_ENUM_FMT            | 枚举设备支持的像素格式                     |
+| VIDIOC_G_FMT               | 获取设备当前的帧格式信息                   |
+| VIDIOC_S_FMT               | 设置帧格式信息                             |
+| VIDIOC_REQBUFS             | 申请帧缓冲                                 |
+| VIDIOC_QUERYBUF            | 查询帧缓冲                                 |
+| VIDIOC_QBUF                | 帧缓冲入队操作                             |
+| VIDIOC_DQBUF               | 帧缓冲出队操作                             |
+| VIDIOC_STREAMON            | 开启视频采集                               |
+| VIDIOC_STREAMOFF           | 关闭视频采集                               |
+| VIDIOC_G_PARM              | 获取设备的一些参数                         |
+| VIDIOC_S_PARM              | 设置参数                                   |
+| VIDIOC_TRY_FMT             | 尝试设置帧格式、用于判断设备是否支持该格式 |
+| VIDIOC_ENUM_FRAMESIZES     | 枚举设备支持的视频采集分辨率               |
+| VIDIOC_ENUM_FRAMEINTERVALS | 枚举设备支持的视频采集帧率                 |
+
+#### 25.2.1 打开摄像头
+
+用 open 打开，得到文件描述符
+
+```c
+int fd = -1;
+/* 打开摄像头 */
+fd = open("/dev/video0", O_RDWR); // 设置读写权限
+if(0>fd)
+{
+    fprintf(stderr, "open error: %s: %s\n", "/dev/video0", strerror(errno));
+    return -1;
+}
+```
+
+#### 25.2.2 查询设备的属性/能力/功能
+
+```c
+ioctl(int fd, VIDIOC_QUERYCAP, struct v4l2_capability *cap);
+```
+
+v412_capability 结构体
+
+```c
+struct v4l2_capability {
+    __u8 driver[16]; /* 驱动的名字 */
+    __u8 card[32]; /* 设备的名字 */
+    __u8 bus_info[32]; /* 总线的名字 */
+    __u32 version; /* 版本信息 */
+    __u32 capabilities; /* 设备拥有的能力 */
+    __u32 device_caps;
+    __u32 reserved[3]; /* 保留字段 */
+};
+```
+
+capabilities 的字段值如下：（videodev2.h 头文件里）
+
+```c
+/* Values for 'capabilities' field */
+#define V4L2_CAP_VIDEO_CAPTURE 0x00000001 /* Is a video capture device */
+#define V4L2_CAP_VIDEO_OUTPUT 0x00000002 /* Is a video output device */
+#define V4L2_CAP_VIDEO_OVERLAY 0x00000004 /* Can do video overlay */
+#define V4L2_CAP_VBI_CAPTURE 0x00000010 /* Is a raw VBI capture device */
+#define V4L2_CAP_VBI_OUTPUT 0x00000020 /* Is a raw VBI output device */
+#define V4L2_CAP_SLICED_VBI_CAPTURE 0x00000040 /* Is a sliced VBI capture device */
+#define V4L2_CAP_SLICED_VBI_OUTPUT 0x00000080 /* Is a sliced VBI output device */
+...
+```
+
+对于摄像头设备来说，它的capabilities 字段必须包含 V4L2_CAP_VIDEO_CAPTURE，表示它支持视频采集功能
+
+```c
+/* 查询设备功能 */
+struct v4l2_capability cap = {0};
+ioctl(fd, VIDIOC_QUERYCAP,&cap);
+/* 判断是否是视频采集设备 */
+if(!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE))
+{
+    fprintf(stderr,"Error: No capture video device!\n");
+    return -1;
+}
+```
+
+#### 25.2.3 设置帧格式、帧率
+
+**枚举出摄像头支持的所有像素格式 VIDIOC_ENUM_FMT**
+
+```c
+ioctl(int fd, VIDIOC_ENUM_FMT, struct v4l2_fmtdesc *fmtdesc);
+```
+
+v4l2_fmtdesc 结构体
+
+```c
+struct v4l2_fmtdesc {
+    __u32 index; /* Format number */
+    __u32 type; /* enum v4l2_buf_type */
+    __u32 flags;
+    __u8 description[32]; /* Description string */
+    __u32 pixelformat; /* Format fourcc */
+    __u32 reserved[4];
+};
+```
 
