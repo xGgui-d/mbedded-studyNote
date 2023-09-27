@@ -1152,7 +1152,7 @@ int main()
 
   从中可以看到，函数指针变量存放在高地址上，是栈空间，而函数名是存放在代码段上，地址比较低，但是函数指针变量的内容就是函数名的地址（也就是在代码段的地址）
 
-  ![image-20230418211834957](C语言基础.assets/image-20230418211834957.png)
+![image-20230418211834957](C语言基础.assets/image-20230418211834957.png)
 
 回调函数
 
@@ -1266,13 +1266,13 @@ double sum(int lim, ...)
  
 int main(void)
 {
- double sum1 = 0, sum2 = 0;
- /* 计算 */
- sum1 = sum(3, 1.1, 2.2, 3.3);  
- sum2 = sum(6, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0);
- printf("sum1 = %f\n", sum1);
- printf("sum2 = %f\n", sum2);
- return 0;
+     double sum1 = 0, sum2 = 0;
+     /* 计算 */
+     sum1 = sum(3, 1.1, 2.2, 3.3);  
+     sum2 = sum(6, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0);
+     printf("sum1 = %f\n", sum1);
+     printf("sum2 = %f\n", sum2);
+     return 0;
 }
 ```
 

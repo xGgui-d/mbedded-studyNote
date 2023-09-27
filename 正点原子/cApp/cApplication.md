@@ -9388,3 +9388,1094 @@ struct v4l2_fmtdesc {
 };
 ```
 
+## 26. cmake 入门与进阶
+
+### 26.1 cmake 简介
+
+...
+
+### 26.2 cmake 和 Makefile
+
+**cmake 和 makefile 的关系**
+
+![image-20230914220302481](cApplication.assets/image-20230914220302481.png)
+
+### 26.3 cmake 的使用方法
+
+#### 26.3.1 单源文件下的基本使用
+
+**安装 cmake（ubuntu 下）**
+
+`sudo apt install cmake`
+
+1. 创建文件夹 filedir
+2. 写一个源码文件 main.c 以及 一个 CMakeLists.txt
+3. 执行 cmake ./
+4. 执行 make
+
+CMakeLists.txt 文件内容如下：
+
+```cmake
+project(HELLO)
+add_executable(hello ./main.c)
+```
+
+**解释 cmake 语法**
+
+```cmake
+project(HELLO)
+# project 是一个命令，() 里面是参数，多个参数用空格分开
+# 这里 project 命令用于设置工程名称，HELLO 不是强制性的，最好加上
+```
+
+```cmake
+add_executable(hello ./main.c)
+# 也是一个命令，用于生成一个可执行文件 () 里有两个参数，第一个是生成的可执行文件的文件名，第二个是表示对应的源文件
+```
+
+**使用 out of source 方式构建**
+
+在源文件目录下创建文件夹 build
+
+![image-20230914221516362](cApplication.assets/image-20230914221516362.png)
+
+进入到 build 文件夹，执行 cmake ../
+
+#### 26.3.2 多个源文件下使用 cmake
+
+hello.h
+
+```c
+#ifndef __HELLO_H__
+#define __HELLO_H__
+void func(const char* str);
+#endif 
+```
+
+hello.c
+
+```c
+#include "hello.h"
+#include <stdlib.h>
+#include <stdio.h>
+void func(const char* str) 
+{
+	printf("hello %s!\r\n",str);
+
+}
+```
+
+main.c
+
+```c
+#include "hello.h"
+int main()
+{
+	func("minecraft");	
+	return 0;
+}
+```
+
+CMakeLists.txt
+
+```cmake
+project(HELLO)
+set(SRC_LIST hello.c main.c) # 这里头文件不用管
+add_executable(hello ${SRC_LIST})
+
+# or
+add_executable(hello hello.c main.c)
+```
+
+#### 26.3.3 生成库文件
+
+在上述示例的基础上将 hello.c 和 hello.h 编译成动态库或者静态库，然后链接到 mian 程序里
+
+```cmake
+project (HELLO)
+add_library(libhello hello.c) # 生成库文件
+add_executable (hello main.c)
+target_link_libraries(hello libhello) # 链接库
+```
+
+**语法解释**
+
+```cmake
+add_library(libhello SHARED hello.c) # 生成动态链接库 liblibhello.so
+add_library(libhello STATIC hello.c) # 生成静态链接库 liblibhello.a
+```
+
+**修改生成的库文件名字**
+
+```cmake
+add_library(hello hello.c) # 这样是不行的，因为 hello 这个目标已经存在
+```
+
+可以设置属性来修改名字
+
+```cmake
+set_target_properties(libhello PROPERTIES OUTPUT_NAME "hello")
+```
+
+完整代码
+
+```cmake
+cmake_minimum_required(VERSION 3.5) # 设置最低版本要求
+project(HELLO)
+add_library(libhello SHARED hello.c)
+set_target_properties(libhello PROPERTIES OUTPUT_NAME "hello")
+add_executable(hello main.c)
+target_link_libraries(hello libhello)
+```
+
+#### 26.3.4 将源文件组织到不同的目录
+
+```c
+├── build #build 目录
+├── CMakeLists.txt
+├── libhello
+	│ ├── CMakeLists.txt
+	│ ├── hello.c
+	│ └── hello.h
+└── src
+	├── CMakeLists.txt
+	└── main.c
+```
+
+* 顶层 CMakeLists.txt
+
+```cmake
+cmake_minimum_required(VERSION 3.5)
+project(HELLO)
+add_subdirectory(libhello)
+add_subdirectory(src)
+```
+
+* libhello 下的 CMakeLists.txt
+
+```cmake
+add_library(libhello hello.c)
+set_target_properties(libhello PROPERTIES OUTPUT_NAME "hello")
+```
+
+* src 下的 CMakeLists.txt
+
+```cmake
+include_directories(${PROJECT_SOURCE_DIR}/libhello)
+add_executable(hello main.c)
+target_link_libraries(hello libhello)
+```
+
+#### 26.3.5 将生成的可执行文件和库文件放置在单独的目录下
+
+```c
+├── build
+	├── lib
+    │ 	└── libhello.a
+ 	└── bin
+  		└── hello
+```
+
+将库文件放在 build 下的 lib 中，将可执行文件放在 build 下的 bin 目录中
+
+* 修改 libhello 下的 CMakeLists.txt
+
+```cmake
+set(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/lib)
+add_library(libhello hello.c)
+set_target_properties(libhello PROPERTIES OUTPUT_NAME "hello")
+```
+
+* 修改 src 下的 CMakeLists.txt
+
+```cmake
+set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin )
+include_directories(${PROJECT_SOURCE_DIR}/libhello)
+add_executable(hello main.c)
+target_link_libraries(hello libhello)
+```
+
+### 26.4 CMakeLists.txt 语法规则
+
+#### 26.4.1 简单的语法介绍
+
+* 注释
+
+```cmake
+#
+# 注释信息
+#
+cmake_minimum_required(VERSION 3.5)
+project(HELLO)
+```
+
+* 命令
+
+在 CMakeLists.txt 文件中使用最多的就是命令，比如 project cmake_minimum_required 等都是命令。命令的基本格式如下
+
+```cmake
+command(参数1 参数2 参数3 ...)
+```
+
+有些命令有必要参数和可选参数，比如用于设置变量的 set 命令
+
+```cmake
+set(<variable> <value> ...[PARENT_SCOPE])
+# <> 表示必要参数 [] 表示可选参数
+```
+
+命令名不区分大小写（建议用小写，与 cmake 内置变量区分开来）
+
+```cmake
+project(HELLO)
+PROJECT(HELLO)
+```
+
+* 变量
+
+```cmake
+# 设置变量 MY_VAL
+set(MY_VAL "Hello World!")
+# 引用变量 MY_VAL
+message(${MY_VAL})
+```
+
+变量有内置变量和自定义变量，如 LIBRARY_OUTPUT_PATH 和 EXECUTABLE_OUTPUT_PATH 就是内置变量
+
+#### 26.4.2 部分常用命令
+
+可通过官网查询
+
+https://cmake.org/cmake/help/v3.5/manual/cmake-commands.7.html   
+
+| command       | 说明           |
+| ------------- | -------------- |
+| dd_executable | 可执行程序目标 |
+| add_library                | 库文件目标                                         |
+| add_subdirectory           | 去指定目录中寻找新的 CMakeLists.txt 文件           |
+| aux_source_directory       | 收集目录中的文件名并赋值给变量                     |
+| cmake_minimum_required     | 设置 cmake 的最低版本号要求                        |
+| get_target_property        | 获取目标的属性                                     |
+| include_directories        | 设置所有目标头文件的搜索路径，相当于 gcc 的-I 选项 |
+| link_directories           | 设置所有目标库文件的搜索路径，相当于 gcc 的-L 选项 |
+| link_libraries             | 设置所有目标需要链接的库                           |
+| list                       | 列表相关的操作                                     |
+| message                    | 用于打印、输出信息                                 |
+| project                    | 设置工程名字                                       |
+| set                        | 设置变量                                           |
+| set_target_properties      | 设置目标属性                                       |
+| target_include_directories | 设置指定目标头文件的搜索路径                       |
+| target_link_libraries      | 设置指定目标库文件的搜索路径                       |
+| target_sources             | 设置指定目标所需的源文件                           |
+
+* add_executable
+
+该命令用于添加一个可执行文件，并设置目标所需的源文件
+
+```cmake
+add_executable(<name> [WIN32] [MACOSX_BUNDLE] [EXCLUDE_FROM_ALL] source1 [source2 ...])
+
+# 生成可执行文件 hello
+add_executable(hello file1.c file2.c file3.c)
+```
+
+这里面可以使用相对路径也可以使用绝对路径，相对路径是只相对 CMakeLists.txt（也就是源码） 的路径
+
+* add_library
+
+该命令用于添加一个库文件目标，并设置目标所需的源文件
+
+```cmake
+add_library(<name> [STATIC|SHARED|MODULE] [EXCLUDE_FROM_ALL] source1 [source2...])
+```
+
+name 指定目标的名字，source1 ...2对应源文件列表，默认生成静态库
+
+```cmake
+add_library(mylib STATIC src1.c src2.c src3.c) # 静态库文件 libmylib.a
+add_library(mylib SHARED src1.c src2.c src3.c) # 动态库文件 libmylib.so
+```
+
+* add_subdirectory
+
+告诉 cmake 去指定目录中寻找源码 (CMakeLists.txt) 并执行它
+
+```cmake
+add_subdirectory(source_dir [binary_dir] [EXCLUDE_FROM_ALL])
+```
+
+比如下例子：
+
+```c
+├── build
+├── CMakeLists.txt
+└── src
+	├── CMakeLists.txt
+	└── main.c
+```
+
+顶层 CMakeLists.txt
+
+```cmake
+# 顶层 CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project("HELLO")
+# 告诉 cmake 去 src 目录下寻找 CMakeLists.txt
+add_subdirectory(src)
+```
+
+src 下的 CMakeLists.txt
+
+```cmake
+# src 下的 CMakeLists.txt
+add_executable(hello main.c)
+```
+
+```cmake
+# 结果如下
+├── build
+│ 	├── CMakeCache.txt
+│ 	├── CMakeFiles
+│ 	├── cmake_install.cmake
+│ 	├── Makefile
+│ 	└── src(默认使用了src)
+│ 		├── CMakeFiles
+│ 		├── cmake_install.cmake
+│ 		├── hello
+│ 		└── Makefile
+├── CMakeLists.txt
+└── src
+	├── CMakeLists.txt
+	└── main.c
+```
+
+如果指定输出文件夹
+
+```camke
+add_subdirectory(src output)
+```
+
+```cmake
+# 结果如下
+├── build
+│ 	├── CMakeCache.txt
+│ 	├── CMakeFiles
+│ 	├── cmake_install.cmake
+│ 	├── Makefile
+│ 	└── output(使用了output)
+│ 		├── CMakeFiles
+│ 		├── cmake_install.cmake
+│ 		├── hello
+│ 		└── Makefile
+├── CMakeLists.txt
+└── src
+	├── CMakeLists.txt
+	└── main.c
+```
+
+对于平级目录就需要指定输出文件，不然 cmake 报错
+
+* aux_source_directory
+
+该命令会查找目录中所有的源(.c / .cpp)文件
+
+```cmake
+aux_source_directory(<dir><variable>)
+```
+
+```c
+├── build
+├── CMakeLists.txt
+└── src
+	├── 1.c
+	├── 2.c
+	├── 2.cpp
+	└── main.c
+```
+
+```cmake
+# 顶层 CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project("HELLO")
+# 查找 src 目录下的所有源文件
+aux_source_directory(src SRC_LIST)
+message("${SRC_LIST}") # 打印 SRC_LIST 变量
+```
+
+![image-20230915172551614](cApplication.assets/image-20230915172551614.png)
+
+* get_target_property 和 set_target_properties
+
+用于设置/获取目标的属性
+
+* include_directories
+
+用于设置头文件的搜索路径，相当于 gcc -I 选项
+
+```cmake
+include_directories([AFTER|BEFORE] [SYSTEM] dir1 [dir2 ...])
+```
+
+```c
+├── build
+├── CMakeLists.txt
+├── include
+│ 	└── hello.h
+└── main.c
+```
+
+```cmake
+# 顶层 CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project("HELLO")
+include_directories(include) # 添加头文件的搜索路径，默认往后面添加
+add_executable(hello main.c)
+```
+
+```cmake
+include_directories(AFTER include)  # 添加到列表后
+include_directories(BEFORE include) # 添加到列表前
+```
+
+```cmake
+#CMakeLists.txt
+cmake_minimum_required(VERSION 3.18.2)
+project(include_directories_test)
+
+include_directories(sub) 
+include_directories(sub2) #默认将sub2添加到列表最后
+include_directories(BEFORE sub3) #可以临时改变行为，添加到列表最前面
+
+get_property(dirs DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+message(">>> include_dirs=${dirs}") #打印一下目录情况
+
+set(CMAKE_INCLUDE_DIRECTORIES_BEFORE ON) #改变默认行为，默认添加到列表前面
+include_directories(sub4)
+include_directories(AFTER sub5) #可以临时改变行为，添加到列表的最后
+get_property(dirs DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+message(">>> SET DEFAULT TO BEFORE, include_dirs=${dirs}")
+```
+
+* link_directories 和 link_libraries
+
+link_directories  用于设置库文件的搜索路径，相当于 gcc -L；link_libraries 用于设置需要链接的库文件，相当于 gcc -l 
+
+```cmake
+link_directories(directory1 directory2 ...)
+link_libraries([item1 [item2 [...]]] [[debug|optimized|general] <item>] ...)
+```
+
+如下实例：
+
+```c
+├── build
+├── CMakeLists.txt
+├── include
+│ 	└── hello.h
+├── lib
+│ 	└── libhello.so
+└── main.c
+```
+
+```cmake
+# 顶层 CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project("HELLO")
+include_directories(include)
+link_directories(lib)
+link_libraries(hello) # 或者使用全称 libhello.so
+add_executable(main main.c)
+```
+
+或者 只使用 link_libraries 但是要指定全路径
+
+```cmake
+# 顶层 CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project("HELLO")
+include_directories(include)
+link_libraries(${PROJECT_SOURCE_DIR}/lib/libhello.so)
+add_executable(main main.c)
+```
+
+* list
+
+list 命令是关于列表（字符串数组）的操作命令
+
+```cmake
+list(LENGTH <list> <output variable>)
+list(GET <list> <element index> [<element index> ...]
+<output variable>)
+list(APPEND <list> [<element> ...])
+list(FIND <list> <value> <output variable>)
+list(INSERT <list> <element_index> <element> [<element> ...])
+list(REMOVE_ITEM <list> <value> [<value> ...])
+list(REMOVE_AT <list> <index> [<index> ...])
+list(REMOVE_DUPLICATES <list>)
+list(REVERSE <list>)
+list(SORT <list>)
+```
+
+LENGTH 选项用于返回列表长度；
+GET 选项从列表中返回由索引值指定的元素；
+APPEND 选项将元素追加到列表后面；
+FIND 选项将返回列表中指定元素的索引值，如果未找到，则返回-1；
+INSERT 选项将向列表中的指定位置插入元素；
+REMOVE_AT 和 REMOVE_ITEM 选项将从列表中删除元素， 不同之处在于 REMOVE_ITEM 将删除给定的元素，而 REMOVE_AT 将删除给定索引值的元素；
+REMOVE_DUPLICATES 选项将删除列表中的重复元素；
+REVERSE 选项就地反转列表的内容；
+SORT 选项按字母顺序对列表进行排序。  
+
+* message
+
+message 用于打印、输出信息，类似于 echo
+
+```cmake
+message([<mode>] "message to display" ...)
+```
+
+| mode       | 说明               |
+| ---------- | ------------------ |
+| none（无） | 重要信息、普通信息 |
+| STATUS     | 附带信息           |
+| WARNING        | CMake 警告，继续处理                                         |
+| AUTHOR_WARNING | CMake 警告（开发），继续处理                                 |
+| SEND_ERROR     | CMake 错误，继续处理，但跳过生成                             |
+| FATAL_ERROR    | CMake 错误，停止处理和生成                                   |
+| DEPRECATION    | 如 果 变 量 CMAKE_ERROR_DEPRECATED 或 CMAKE_WARN_DEPRECATED 分别启用， 则 CMake 弃用错 误或警告，否则没有消息。 |
+
+```cmake
+# 打印 hello world
+message("Hello World!")
+```
+
+* project
+
+用于设置工程名称，同时执行这个命令之后就会引入两个变量：HELLO_SOURCE_DIR 和 HELLO_BINARY_DIR ，分别指 HELLO 工程源码目录  ，输出目录。如果不用这条命令，则可以使用 PROJECT_SOURCE_DIR 和 PROJECT_BINARY_DIR 来代替
+
+```cmake
+project(HELLO)
+```
+
+如下实例：
+
+```cmake
+# 顶层 CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project("HELLO")
+message("工程源码目录：${HELLO_SOURCE_DIR}")
+message("输出目录：${HELLO_BINARY_DIR}")
+```
+
+![image-20230915194717807](cApplication.assets/image-20230915194717807.png)
+
+* set
+
+set 命令用于设置变量
+
+```cmake
+set(<variable> <value> ... [PARENT_SCOPE])
+```
+
+使用实例：
+
+```cmake
+# 顶层 CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project("HELLO")
+# set 命令
+set(VAR1 Hello) #设置变量 VAR1=Hello
+set(VAR2 World) #设置变量 VAR2=World
+# 打印变量
+message(${VAR1} " " ${VAR2})
+```
+
+**字符串列表**
+
+```cmake
+# 字符串列表
+set(SRC_LIST 1.c 2.c 3.c 4.c 5.c)
+# 输出
+message("${SRC_LIST}")
+SRC_LIST = 1.c;2.c;3.c;4.c;5.c
+message(${SRC_LIST})
+SRC_LIST = 1.c2.c3.c4.c5.c
+```
+
+对字符串列表的操作
+
+```cmake
+# 顶层 CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project("HELLO")
+# 列表
+set(SRC_LIST main.c world.c hello.c)
+message("SRC_LIST: ${SRC_LIST}")
+#列表操作
+list(LENGTH SRC_LIST L_LEN)
+message("列表长度: ${L_LEN}")
+list(GET SRC_LIST 1 VAR1)
+message("获取列表中 index=1 的元素: ${VAR1}")
+list(APPEND SRC_LIST hello_world.c) #追加元素
+message("SRC_LIST: ${SRC_LIST}")
+list(SORT SRC_LIST) #排序
+message("SRC_LIST: ${SRC_LIST}")
+```
+
+* target_include_directories 和 target_link_libraries
+
+```cmake
+target_include_directories(<target> [SYSTEM] [BEFORE]
+<INTERFACE|PUBLIC|PRIVATE> [items1...] [<INTERFACE|PUBLIC|PRIVATE> [items2...] ...])
+target_link_libraries(<target> <PRIVATE|PUBLIC|INTERFACE> <item>... [<PRIVATE|PUBLIC|INTERFACE <item>...]...)
+```
+
+```c
+├── build //build 目录
+├── CMakeLists.txt
+├── hello_world //生成 libhello_world.so,调用 libhello.so 和 libworld.so
+│ 	├── CMakeLists.txt
+│ 	├── hello //生成 libhello.so
+│ 	│ 	├── CMakeLists.txt
+│ 	│ 	├── hello.c
+│ 	│ 	└── hello.h //libhello.so 对外头文件
+│ 	├── hello_world.c
+│ 	├── hello_world.h //libhello_world.so 对外头文件
+│ 	└── world //生成 libworld.so
+│ 		├── CMakeLists.txt
+│ 		├── world.c
+│ 		└── world.h //libworld.so 对外头文件
+└── main.c
+```
+
+* 当使用 **PRIVATE** 关键字修饰时，意味着包含目录列表仅用于当前目标；  
+
+* 当使用 **INTERFACE** 关键字修饰时，意味着包含目录列表不用于当前目标、 只能用于依赖该目标的其它目标，也就是说 cmake 会将包含目录列表传递给当前目标的依赖目标；  
+
+* 当使用 **PUBLIC** 关键字修饰时，这就是以上两个的集合， 包含目录列表既用于当前目标、也会传递给当前目标的依赖目标。  
+
+#### 26.4.3 部分常用变量
+
+**提供信息的变量**，这些变量可以用来读取信息，不需要对其进行修改
+
+| 变量                     | 说明                                                         |
+| ------------------------ | ------------------------------------------------------------ |
+| PROJECT_SOURCE_DIR       | 工程顶层目录，也就是顶层 CMakeLists.txt 源码所在目录         |
+| PROJECT_BINARY_DIR       | 工 程 BINARY_DIR ， 也 就 是 顶 层 CMakeLists.txt 源 码 的 BINARY_DIR |
+| CMAKE_SOURCE_DIR         | 与 PROJECT_SOURCE_DIR 等价                                   |
+| CMAKE_BINARY_DIR         | 与 PROJECT_BINARY_DIR 等价                                   |
+| CMAKE_CURRENT_SOURCE_DIR | 当前源码所在路径                                             |
+| CMAKE_CURRENT_BINARY_DIR | 当前源码的 BINARY_DIR                                        |
+| CMAKE_MAJOR_VERSION      | cmake 的主版本号                                             |
+| CMAKE_MINOR_VERSION   | cmake 的次版本号                   |
+| CMAKE_VERSION         | cmake 的版本号（主+次+修订）       |
+| PROJECT_VERSION_MAJOR | 工程的主版本号                     |
+| PROJECT_VERSION_MINOR | 工程的次版本号                     |
+| PROJECT_VERSION       | 工程的版本号                       |
+| CMAKE_PROJECT_NAME    | 工程的名字                         |
+| PROJECT_NAME          | 工程名，与 CMAKE_PROJECT_NAME 等价 |
+
+* PROJECT_SOURCE_DIR 和 PROJECT_BINARY_DIR
+
+```cmake
+# CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project(HELLO)
+message(${PROJECT_SOURCE_DIR})
+message(${PROJECT_BINARY_DIR})
+# ../../cmake_test/build
+# ../../cmake_test/
+```
+
+* CMAKE_SOURCE_DIR 和 CMAKE_BINARY_DIR
+
+```c
+├── build
+├── CMakeLists.txt
+├── main.c
+└── src
+	└── CMakeLists.txt
+```
+
+```cmake
+# src 下的 CMakeLists.txt
+message(${PROJECT_SOURCE_DIR})
+message(${PROJECT_BINARY_DIR})
+message(${CMAKE_CURRENT_SOURCE_DIR})
+message(${CMAKE_CURRENT_BINARY_DIR})
+```
+
+![image-20230916100327334](cApplication.assets/image-20230916100327334.png)
+
+* CMAKE_VERSION、CMAKE_MAJOR_VERSION、CMAKE_MINOR_VERSION
+
+记录 cmake 的版本号
+
+```cmake
+# CMakeLists.txt
+message(${CMAKE_VERSION})
+message(${CMAKE_MAJOR_VERSION})
+message(${CMAKE_MINOR_VERSION})
+```
+
+* PROJECT_VERSION、PROJECT_MAJOR_VERSION、PROJECT_MINOR_VERSION
+
+```cmake
+# CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project(HELLO VERSION 1.1.0) #设置工程版本号为 1.1.0
+# 打印
+message(${PROJECT_VERSION})
+message(${PROJECT_VERSION_MAJOR})
+message(${PROJECT_VERSION_MINOR})
+```
+
+* CMAKE_PROJECT_NAME 和 PROJECT_NAME
+
+这两个等价的，显示工程的名字
+
+```cmake
+# CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project(HELLO VERSION 1.1.0) #设置工程版本号为 1.1.0
+# 打印工程名字
+message(${CMAKE_PROJECT_NAME})
+message(${PROJECT_NAME})
+```
+
+**改变行为的变量**
+
+| 变量                             | 说明                                                         |
+| -------------------------------- | ------------------------------------------------------------ |
+| BUILD_SHARED_LIBS                | 控制 cmake 是否生成动态库                                    |
+| CMAKE_BUILD_TYPE                 | 指定工程的构建类型， release 或 debug                        |
+| CMAKE_SYSROOT                    | 对应编译器的在--sysroot 选项                                 |
+| CMAKE_IGNORE_PATH                | 设置被 find_xxx 命令忽略的目录列表                           |
+| CMAKE_INCLUDE_PATH               | 为 find_file()和 find_path()命令指定搜索路径的目 录列表      |
+| CMAKE_INCLUDE_DIRECTORIES_BEFORE | 用于控制 include_directories()命令的行为                     |
+| CMAKE_LIBRARY_PATH               | 指定 find_library()命令的搜索路径的目录列表                  |
+| CMAKE_MODULE_PATH                | 指定要由 include()或 find_package()命令加载的 CMake 模块的搜索路径的目录列表 |
+| CMAKE_PROGRAM_PATH               | 指定 find_program()命令的搜索路径的目录列表                  |
+
+* BUILD_SHARED_LIBS
+
+当没有指定时， cmake 默认生成静态库，如果设置该变量可以使得 cmake 默认生成动态库
+
+```cmake
+# 顶层 CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project(HELLO VERSION 1.1.0)
+set(BUILD_SHARED_LIBS on) # 设置默认是动态库
+add_library(hello hello/hello.c)
+add_library(world world/world.c)
+```
+
+* CMAKE_BUILD_TYPE
+
+设置编译类型 Debug 或者 Release。 debug 版会生成相关调试信息，可以使用 GDB 进行调试； release 不会生成调试信息  
+
+```cmake
+# Debug 版本
+set(CMAKE_BUILD_TYPE Debug)
+# Release 版本
+set(CMAKE_BUILD_TYPE Release)
+```
+
+* CMAKE_SYSROOT
+
+cmake 会将该变量传递给编译器--sysroot 选项，通常我们在设置交叉编译时会使用到  
+
+* CMAKE_INCLUDE_PATH
+
+为 find_file()【查找文件，返回全路径】 和 find_path() 【查找文件，返回文件的所在目录】命令指定搜索路径的目录列表。
+
+```c
+├── build
+├── CMakeLists.txt
+└── src
+    └── hello.c
+```
+
+```cmake
+# CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project(HELLO VERSION 1.1.0) #设置工程版本号为 1.1.0
+# 设置 CMAKE_INCLUDE_PATH 变量
+set(CMAKE_INCLUDE_PATH ${PROJECT_SOURCE_DIR}/src)
+# 查找文件
+find_file(P_VAR hello.c)
+message(${P_VAR})
+```
+
+* CMAKE_LIBRARY_PATH
+
+指定 find_library() 命令的搜索路径的目录列表，该命令用于搜索库文件
+
+* CMAKE_MODULE_PATH 
+
+指定要由 Include 或 find_package 命令加载的 CMAKE 模块的搜索路径的目录列表
+
+* CMAKE_INCLUDE_DIRECTORIES_BEFORE
+
+改变 include_directories 为默认添加到前面
+
+* CMAKE_IGNORE_PATH
+
+被 find_program()、 find_library()、 find_file()和 find_path()命令忽略的目录列表。 表示这些命令不会去CMAKE_IGNORE_PATH 变量指定的目录列表中搜索  
+
+**描述系统的变量**，描述了系统相关的一些信息
+
+| 变量                        | 说明                                                         |
+| --------------------------- | ------------------------------------------------------------ |
+| CMAKE_HOST_SYSTEM_NAME      | 运行 cmake 的操作系统的名称（其实就是 uname -s）             |
+| CMAKE_HOST_SYSTEM_PROCESSOR | 运行 cmake 的操作系统的处理器名称（uname -p）                |
+| CMAKE_HOST_SYSTEM           | 运行 cmake 的操作系统（复合信息）                            |
+| CMAKE_HOST_SYSTEM_VERSION   | 运行 cmake 的操作系统的版本号（uname -r）                    |
+| CMAKE_HOST_UNIX             | 如果运行 cmake 的操作系统是 UNIX 和类 UNIX，则 该变量为 true，否则是空值 |
+| CMAKE_HOST_WIN32            | 如果运行 cmake 的操作系统是 Windows，则该变量 为 true，否则是空值 |
+| CMAKE_SYSTEM_NAME           | 目标主机操作系统的名称                                       |
+| CMAKE_SYSTEM_PROCESSOR      | 目标主机的处理器名称                                         |
+| CMAKE_SYSTEM                | 目标主机的操作系统（复合信息）                               |
+| CMAKE_SYSTEM_VERSION        | 目标主机操作系统的版本号                                     |
+| ENV                         | 用于访问环境变量                                             |
+| UNIX                        | 与 CMAKE_HOST_UNIX 等价                                      |
+| WIN32                       | 与 CMAKE_HOST_WIN32 等价                                     |
+
+**控制编译的变量**
+
+| 变量                   | 说明                 |
+| ---------------------- | -------------------- |
+| EXECUTABLE_OUTPUT_PATH | 可执行程序的输出路径 |
+| LIBRARY_OUTPUT_PATH    | 库文件的输出路径     |
+
+如下例子：
+
+```cmake
+├── build
+├── CMakeLists.txt
+├── hello
+│ 	├── hello.c
+│ 	└── hello.h
+└── main.c
+```
+
+```cmake
+# CMakeLists.txt
+cmake_minimum_required("VERSION" "3.5")
+project(HELLO VERSION 1.1.0) #设置工程版本号为 1.1.0
+# 设置可执行文件和库文件输出路径
+set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
+set(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/lib)
+# 头文件包含
+include_directories(hello)
+# 动态库目标
+add_library(hello SHARED hello/hello.c)
+# 可执行程序目标
+add_executable(main main.c)
+target_link_libraries(main PRIVATE hello) #链接库
+```
+
+```cmake
+├── build
+│ 	├── bin
+│ 	│ 	└── main
+│ 	├── lib
+│ 		└── libhello.so
+├── CMakeLists.txt
+├── hello
+│ 	├── hello.c
+│ 	└── hello.h
+└── main.c
+```
+
+#### 26.4.4 双引号的作用
+
+**命令参数**
+
+调用命令时，参数可以使用双引号，如：
+
+```cmake
+project("HELLO")
+```
+
+也可以不使用双引号
+
+```cmake
+project(HELLO)
+```
+
+上面无差别，但是如下例子会看出差别
+
+```cmake
+message(Hello World) # 表示有两个参数
+message("Hello World") # 表示只有一个参数，引号里面是一个整体
+```
+
+**引用变量**
+
+```cmake
+# CMakeLists.txt
+set(MY_LIST Hello World China)
+message("${MY_LIST}") # cmake 会将变量当成一个整体，但是又为了表示数组的意义，会加上';'进行打印输出
+message(${MY_LIST})
+```
+
+#### 26.4.5 条件判断
+
+```cmake
+if(expression)
+# then section.
+command1(args ...)
+command2(args ...)
+...
+elseif(expression2)
+# elseif section.
+command1(args ...)
+command2(args ...)
+...
+else(expression)
+# else section.
+command1(args ...)
+command2(args ...)
+...
+endif(expression) # 括号里的内容可写可不写，写的话要与 expression 对称
+```
+
+* \<constant>
+
+在 if(constant)条件判断中，如果 constant 是 1、 ON、 YES、 TRUE、 Y 或非零数字，那么这个 if 条件就是 true；如果 constant 是 0、 OFF、 NO、 FALSE、 N、 IGNORE、 NOTFOUND、空字符串或以后缀-NOTFOUND 结尾，那么这个条件判断的结果就是 false  
+
+```cmake
+if(ON)
+	message(true)
+else()
+	message(false)
+endif()
+# 输出为 false
+```
+
+* \<variable/string>
+
+在 if(<variable/string>)条件判断中，如果变量已经定义，并且它的值是一个非假常量，则条件为真；否则为假
+
+```cmake
+set(GG Hello)
+if(GG)
+	message(true)
+else()
+	message(false)
+endif()
+# 输出为 true
+
+set(GG NO)
+if(GG)
+	message(true)
+else()
+	message(false)
+endif()
+# 输出为 false
+
+if(GG)
+	message(true)
+else()
+	message(false)
+endif()
+# 输出为 false
+```
+
+* NOT\<expression>
+
+```cmake
+if(NOT GG)
+	message(true)
+else()
+	message(false)
+endif()	
+# 输出为 true
+```
+
+* \<expr1>AND\<expr2>
+* \<expr1>OR\<expr2>
+
+```cmake
+if(yes AND no)
+	message(true)
+else()
+	message(false)
+enif()
+
+# 输出为 false
+```
+
+* COMMAND command-name
+
+```cmake
+if(COMMAND project)
+	message(true)
+else()
+	message(false)
+enfi()
+
+# project 是命令，条件为真
+```
+
+* TARGET target-name
+
+如果 target-name 是 add_executable()、 add_library() 或 add_custom_target() 定义的目标 ，则为真
+
+```cmake
+if(TARGET hello)
+	message(true)
+else()
+	message(false)
+endif()
+# 输出为 false
+```
+
+* EXISTS path
+
+如果 path 指定的文件或目录存在，则条件判断为真；否则为假。需要注意的是， path 必须是文件或目录的全路径，也就是绝对路径  
+
+* IS_DIRECTORY path
+* IS_ABSOLUTE path
+
+* \<variable|string> MATCHES regex
+
+这个表达式用的比较多，可以用来匹配字符串
+
+```cmake
+set(MY_STR "Hello World")
+if(${MY_STR} MATCHES "Hello World")
+	message(true)
+else()
+	message(false)
+endif()
+
+# true
+```
+
+* \<variable|string>IN_LIST\<variable>
+
+```cmake
+set(MY_LIST Hello World China)
+if(Hello IN_LIST MY_LIST)
+	message(true)
+else()
+	message(false)
+endif()
+# true
+```
+
+* DEFINED \<variable>
+
+如果给定的变量已经定义，则条件判断为真，否则为假；  
+
+```cmake
+set(yyds "YYDS")
+if(DEFINED yyds)
+	message(true)
+else()
+	message(false)
+endif()
+```
+

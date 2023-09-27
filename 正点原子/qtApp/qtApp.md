@@ -320,6 +320,8 @@ QObject::connect(sender,SIGNAL(signal()), receiver, SLOT(slot()));
 
 跳过。。。
 
+## 6-7. 跳过
+
 ## 8. 文本读写
 
 ### 8.1 QFile 读写文本
@@ -690,3 +692,226 @@ QUdpSocket 类提供了一个 UDP 套接字，QUdpSocket 是 QAbstractSocket 的
 #### 11.3.2.1 应用实例
 
 测试的话，就打开 2 个程序，然后调到统一组播 ip 和端口，然后两个本地 ip 之间就能通信了
+
+## 12. 多媒体
+
+### 12.1 Qt 多媒体简介
+
+Qt 多媒体模块提供了很多类， 主要有 QMediaPlayer， QSound、 QSoundEffect、 QAudioOutput、QAudioInput、 QAudioRecorder、 QVideoWidget 等
+
+* 添加模块
+
+```cpp
+QT += multimedia
+```
+
+* ubuntu 16/18 需要安装以下插件
+
+```sh
+sudo apt-get install gstreamer1.0-plugins-base gstreamer1.0-plugins-bad gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-pulseaudio gstreamer1.0-libav
+```
+
+### 12.2 音效文件播放
+
+```cpp
+void MainWindow::slot_clicked_btn()
+{
+    /* 使用 QSound 来解析 .wav 文件音效*/
+    QSound::play("/home/xggui/Qt_projs/10_button_sound/sound.wav");
+}
+```
+
+### 12.3 音乐播放器
+
+QMediaPlayer 类是一个高级媒体播放类。它可以用来播放歌曲、电影和网络广播等内容。一般用于播放 mp3 和 mp4 等等媒体文件
+
+![image-20230612111231894](qtApp.assets/image-20230612111231894.png)
+
+用到两个关键类：
+
+* QMediaPlayer
+* QMediaPlaylist
+
+### 12.4 视频播放器
+
+和音乐播放器一样使用 QMediaPlayer 类，但是需要使用 setVideoOutput(QVideoWidget*) 设置一个视频输出窗口，其他步骤都一样
+
+![image-20230612154714860](qtApp.assets/image-20230612154714860.png)
+
+* 添加模块 multimediawidgets
+
+```cpp
+/* 媒体播放器初始化 */
+void MainWindow::mediaPlayerInit()
+{
+    videoPlayer = new QMediaPlayer(this);
+    mediaPlaylist = new QMediaPlaylist(this);
+
+    mediaPlaylist->clear();
+    videoPlayer->setPlaylist(mediaPlaylist); // 设置播放列表
+    videoPlayer->setVideoOutput(videoWidget); /* 关键，设置媒体窗口 */
+    mediaPlaylist->setPlaybackMode(QMediaPlaylist::Loop);
+    videoPlayer->setVolume(50);
+
+}
+```
+
+### 12.5 录音
+
+提供了 QAudioRecorder 类录制音频，继承于 QmediaRecorder 类，音频输入可以使用 QAudioRecorder 或者 QAudioInput 类实现
+
+* 添加模块
+
+```cpp
+QT += multimedia
+```
+
+由于需要板子上的声卡，mini 板没有声卡，所以不测试了，可以看看代码
+
+![image-20230612173456695](qtApp.assets/image-20230612173456695.png)
+
+## 13. 数据库
+
+* 添加模块
+
+```cp
+QT +=core gui sql
+```
+
+### 13.1 Qt SQL 简介
+
+Qt SQL 模块为数据库提供了编程支持， Qt 支持很多种常见的数据库，如 MySQL、Oracle、MS SQL Server、 SQLite 等  
+
+在嵌入式里，一般常用的数据库就是 Sqlite3，这个数据库是轻量级的，是一个进程内的库，不是独立的进程
+
+> 在 QSqlDatabase 连接数据库后，用 QSqlTableModel 从数据库里读取出表格模型，然后通过 Qt 的 QTableView 类显示数据库的内容在我们面前  
+
+![image-20230612204446438](qtApp.assets/image-20230612204446438.png)
+
+> 执行程序之后会在当前执行文件的目录下创建 alarm.db 文件
+
+### 13.2 实用闹钟
+
+* 主要类
+
+```cpp
+ /* 数据库连接类 */               
+ QSqlDatabase sqlDatabase;  
+ /* 数据库操作模型 */              
+ QSqlTableModel *model;     
+```
+
+数据库的创建
+
+```cpp
+/* 查看本机可用的数据库驱动 */                                     
+QStringList drivers = QSqlDatabase::drivers();         
+foreach(QString driver, drivers)                       
+{                                                      
+    qDebug()<<driver;                                  
+}                                                      
+/* 以QSQLITE 驱动方式打开或者创建数据库 */                           
+sqlDatabase = QSqlDatabase::addDatabase("QSQLITE");    
+sqlDatabase.setDatabaseName("alarm.db");               
+                                                       
+/* 以 open 的方式打开 alarm.db 数据库，则会创建一个 alarm.db */        
+if(!sqlDatabase.open())                                
+    qDebug()<<"连接数据库失败"<<endl;                         
+else                                                   
+    qDebug()<<"连接数据库成功"<<endl;                         
+                                                       
+/* 要执行数据库指令则要创建 query 对象 */                            
+QSqlQuery query(sqlDatabase);                          
+/* 使用指令创建表 */                                          
+query.exec("create table alarm"                        
+           "(id int primary key, "                     
+           "time vchar(15), "                          
+           "flag vchar(5))");                          
+model = new QSqlTableModel(this,sqlDatabase);          
+/* 模型设置表的名字，需要与数据库的表的名字相同 */                           
+model->setTable("alarm");                              
+/* 设置为: 如果有修改则同步修改到数据库 */                              
+model->setEditStrategy(QSqlTableModel::OnFieldChange); 
+model->select(); // 用于判断是否存在表                          
+```
+
+数据库执行操作
+
+```cpp
+// 如果表为空                                                      
+if(model->rowCount() == 0)                                    
+{                                                             
+    // 插入一行                                                   
+    model->insertRow(model->rowCount());                      
+    // 在该行插入数据                                                
+    model->setData(model->index(0,0),1);                      
+    model->setData(model->index(0,1),"06:00");                
+    model->setData(model->index(0,2),"false");                
+    // 提交表                                                    
+    model->submit();                                                                                         
+    // 插入一行                                                   
+    model->insertRow(model->rowCount());                      
+    // 在该行插入数据                                                
+    model->setData(model->index(1,0),2);                      
+    model->setData(model->index(1,1),"18:00");                
+    model->setData(model->index(1,2),"true");                 
+    // 提交表                                                 
+    model->submit();                                    
+}                                                             
+// 或者用指令插入数据                                               
+//query.exec("insert into alarm values(0, '06:00', 'false')");
+
+/* 删除数据库整一行数据 */                           
+model->removeRow(listWidget->currentRow());
+model->submit();                           
+```
+
+关闭数据库
+
+```cpp
+MainWindow::~MainWindow()
+{
+    delete ui;
+    /* 关闭数据库 */
+    sqlDatabase.close();
+}
+```
+
+![image-20230612223013168](qtApp.assets/image-20230612223013168.png)
+
+### 13.3 数据库表格
+
+![image-20230721081841908](qtApp.assets/image-20230721081841908.png)
+
+## 14. I.MX6U Qt开发
+
+### 14.1 使用命令行编译
+
+在 unbunt 上交叉编译好程序，然后拷贝到板子上运行
+
+### 14.2 在 Qt Creator 搭建交叉编译环境
+
+使用远程连接开发板进行调试
+
+## 15. Qt 控制 LED
+
+采用 QFile 读取系统中的 `/sys/devices/platform/leds/leds/sys-led/brightness` 文件，往里面写入 0 或者 1 实现对 led 的控制，使用 system 函数实现在系统上执行脚本语言
+
+![image-20230721091131729](qtApp.assets/image-20230721091131729.png)
+
+## 16. Qt 控制 BEEP
+
+和上一个项目差不多，只是写入和读取的文件不一样而已
+
+## 17. Serial Port
+
+Qt 提供了串口类，可以直接对串口进行访问
+
+### 17.1 资源简介
+
+板子里默认配置了两路串口可以使用，一路是调试串口 UART1（对应节点 /dev/ttymxc0）另外一路是 UART3（对应节点 /dev/ttymxc2）我们对这一路进行编程
+
+### 17.2 串口助手应用实例
+
+![image-20230721171850452](qtApp.assets/image-20230721171850452.png)
+
