@@ -9,17 +9,17 @@ struct line_t {
     char end;
     int weight;
 };
-
 /* U集合和S集合的元素 */
 struct element_t {
     char e_point;
     int e_weight;
-    int isInU; // 标志位，1代表U集合中(S中没有该元素) 0代表不在U集合中(S中存在该元素)
+    unsigned int isInU; // 标志位，1代表U集合中(S中没有该元素) 0代表不在U集合中(S中存在该元素)
 };
 int s_count = 0;
 
+/**************************要填写的数据*************************/
 char src = 'A'; // 起始点
-/* 输入个路径的数据 */
+/* 输入路径的数据 */
 #define LINE_COUNT 10 // 图的线数
 #define POINT_COUNT 6 // 图的点数
 struct line_t lines[LINE_COUNT] = {
@@ -28,7 +28,9 @@ struct line_t lines[LINE_COUNT] = {
     {'D', 'E', 6}, {'E', 'F', 12}, {'E', 'C', 1},
     {'D', 'C', 15}             
 };
-char point[POINT_COUNT] = {'A', 'B', 'C', 'D', 'E', 'F'}; // 所有点的集合
+// 所有点的集合
+char point[POINT_COUNT] = {'A', 'B', 'C', 'D', 'E', 'F'};
+/***************************************************************/
 
 /* 以src为中心点计算U集合的元素 */
 static void __calculate_U(struct element_t *src, struct element_t *U)
@@ -58,7 +60,7 @@ next_loop:;
 }
 
 /* 计算U集合元素中的最小值并将元素移动到S集合中 */
-static void cal_min_to_U(struct element_t *S, struct element_t *U)
+static void __select_min_U(struct element_t *S, struct element_t *U)
 {
     int i;
     int min_weight = 0;
@@ -92,17 +94,16 @@ static void calculate_U(struct element_t *S, struct element_t *U)
         for(j = 0; j < s_count; j++) {
             __calculate_U(&S[j], U);
         }
-        cal_min_to_U(S, U);
+        __select_min_U(S, U);
         /* 打印测试 */
-        printf("---------步骤<%d>------------\r\n",i);
+        printf("---------step<%d>------------\r\n",i);
         for(m = 0; m < POINT_COUNT; m++) {
             printf("U%d: e_point[%c] e_weight[%d]\r\n", m, U[m].e_point, U[m].e_weight);
         }
-            printf("---------------------------\r\n");
+        printf("---------------------------\r\n");
         for(m = 0; m < s_count; m++) {
             printf("S%d: e_point[%c] e_weight[%d]\r\n", m, S[m].e_point, S[m].e_weight);
         }
-         
     }
 }
 
@@ -122,6 +123,8 @@ int main()
         U[i].e_weight = INT_MAX;
         U[i].isInU = 1;
     }
+    /* 开始算法 */
     calculate_U(S, U);
+
     exit(0);
 }
