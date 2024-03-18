@@ -1,3 +1,4 @@
 # 迪杰特斯拉算法（c 语言）
 
 用于计算无向图最短路径
+https://zhuanlan.zhihu.com/p/346558578
